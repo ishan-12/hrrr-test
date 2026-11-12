@@ -64,7 +64,8 @@ Values are stored exactly as published, in native GRIB2 units.
 | `v_component_wind_80m` | `VGRD:80 m above ground` | m/s |
 
 Each downloaded message is also checked by what it says it is (GRIB2 discipline, category, number,
-level type and value, forecast hour, run date and time, and grid), not only by its `.idx` label.
+level type and value, an instantaneous product (template 0), forecast hour, run date and time, and
+grid), not only by its `.idx` label.
 How each identity was verified: [docs/research/hrrr-variables.md](docs/research/hrrr-variables.md).
 
 Conventions:
@@ -95,6 +96,8 @@ without installing anything else, from the project folder:
 uv run python -c "import duckdb; print(duckdb.connect('data.db', read_only=True).sql('DESCRIBE hrrr_forecasts'))"
 ```
 
+Put any of the queries below in place of `DESCRIBE hrrr_forecasts` the same way.
+
 ```sql
 -- 1. Schema: the spec's 7 columns and types, in order
 DESCRIBE hrrr_forecasts;
@@ -115,7 +118,7 @@ so a duplicate cannot be inserted at all.
 
 - Before downloading, the tool asks DuckDB which (hour, variable) blocks have any requested row
   missing, and works only on those. A re-run of a finished command with an explicit `--run-date`
-  and an intact cache makes no network requests (the default date costs one listing request; a
+  and an intact cache makes no network requests (the default date costs one or two listing requests; a
   deleted cache costs one message download to read the grid). Adding a point usually needs no
   download either: the messages are already cached.
 - Each downloaded message is saved as `.cache/hrrr/YYYYMMDD/fNN/<variable>.grib2` (written to a

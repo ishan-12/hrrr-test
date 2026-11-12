@@ -51,8 +51,9 @@ One file per message (`YYYYMMDD/fNN/<variable>.grib2`), written to a temporary f
 place. A cached file is reused only if it is a complete GRIB2 message (its length matches the
 length in its own header and it ends in `7777`) and it passes the same identity checks as a fresh
 download; otherwise it is downloaded again and the new copy replaces it. If the cache cannot be
-written (full or read-only disk), the downloaded message is still used and the failure reported. There is no automatic clean-up; a full default
-run caches about 0.8 GB. Deleting the folder is always safe.
+written (full or read-only disk), the downloaded message is still used and the failure reported.
+There is no automatic clean-up; a full default run caches about 0.8 GB. Deleting the folder is
+always safe.
 
 ## Alternatives considered
 

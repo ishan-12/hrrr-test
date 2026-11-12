@@ -173,5 +173,18 @@ submission, at full scope. The postflight is recorded below.
 The engine also records each mutmut run as evidence when it starts. That includes one `source.py`
 run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore not cited.
 
-<!-- postflight and report results: see below -->
+**The postflight.**
+
+- **First submission: rejected, with 9 errors.**
+  - One note did not name a changed file.
+  - The slowdown rule's 1 ms latency budget does not fit a network-bound batch job, so the
+    over-budget estimate needed an explicit justification.
+  - All the test and mutation evidence was stale. The engine counts every shell command it cannot
+    classify as a possible code change. That included the wait loops between mutation runs and the
+    reviewer agents' scratch scripts, so each one made the earlier evidence look out of date.
+- **What was done about it.** All edits were finished and committed. Then the full test suite and
+  the six mutation runs were repeated back to back, with only read-only commands in between, and
+  the postflight was resubmitted.
+- **The resubmission and `ruler report`** were the last actions of the session. Their outcome is
+  reported to the owner directly and saved with the private notes.
 
