@@ -1,0 +1,194 @@
+# hrrr-ingest
+
+A command-line tool that downloads NOAA HRRR forecasts (the 06z run, up to 48 hours) for a list of
+points and stores them in a local DuckDB file, `data.db`, in the `hrrr_forecasts` table.
+
+```bash
+hrrr-ingest points.txt --run-date 2025-04-24 --variables temperature_2m,surface_pressure --num-hours 2
+```
+
+It downloads only the GRIB2 messages it needs (HTTP byte ranges located through each file's `.idx`
+index), keeps them in a local cache, and never stores a row twice. Running the same command again
+downloads nothing and adds nothing.
+
+## Setup
+
+You need [uv](https://docs.astral.sh/uv/) and Python 3.12 or newer; uv installs Python if needed.
+ecCodes, the GRIB2 decoder, comes as a binary wheel (`eccodeslib`), so no system packages are
+required on macOS or Linux.
+
+```bash
+git clone <this repo> && cd hrrr-ingest
+uv sync                      # creates .venv with the pinned dependencies
+uv run hrrr-ingest --help
+uv run pytest                # offline test suite, a few seconds
+```
+
+Or with Docker (see [Docker](#docker)).
+
+## Running it
+
+```bash
+uv run hrrr-ingest points.txt [--run-date YYYY-MM-DD] [--variables a,b,...] [--num-hours N]
+```
+
+| Argument | Meaning | Default |
+| --- | --- | --- |
+| `points.txt` | Text file, one `latitude,longitude` per line (decimal degrees, longitude -180..180). Blank lines are ignored; duplicates collapse. | required |
+| `--run-date` | Date of the 06z run, UTC. | The newest UTC date whose 06z run is fully published (all of f00-f48). |
+| `--variables` | Comma-separated names from the table below. | All 11 |
+| `--num-hours` | Forecast hours f00 to f(N-1), 1 <= N <= 48. `--num-hours 2` stores 06:00 and 07:00 UTC. | 48 |
+
+`data.db` and the cache folder `.cache/hrrr/` are created in the current directory.
+[`points.txt`](points.txt) holds the spec's 9 example points.
+
+The spec mentions "each of the dates in the date range"; the CLI it specifies takes a single
+`--run-date`, so that is what is implemented.
+
+### Variables and units
+
+Values are stored exactly as published, in native GRIB2 units.
+
+| Stored name | HRRR `.idx` label | Units |
+| --- | --- | --- |
+| `surface_pressure` | `PRES:surface` | Pa |
+| `surface_roughness` | `SFCR:surface` | m |
+| `visible_beam_downward_solar_flux` | `VBDSF:surface` | W/m² |
+| `visible_diffuse_downward_solar_flux` | `VDDSF:surface` | W/m² |
+| `temperature_2m` | `TMP:2 m above ground` | K |
+| `dewpoint_2m` | `DPT:2 m above ground` | K |
+| `relative_humidity_2m` | `RH:2 m above ground` | % |
+| `u_component_wind_10m` | `UGRD:10 m above ground` | m/s |
+| `v_component_wind_10m` | `VGRD:10 m above ground` | m/s |
+| `u_component_wind_80m` | `UGRD:80 m above ground` | m/s |
+| `v_component_wind_80m` | `VGRD:80 m above ground` | m/s |
+
+Each downloaded message is also checked by what it says it is (GRIB2 discipline, category, number,
+level type and value, forecast hour, run date and time, and grid), not only by its `.idx` label.
+How each identity was verified: [docs/research/hrrr-variables.md](docs/research/hrrr-variables.md).
+
+Conventions:
+
+- **Winds are grid-relative.** HRRR's u/v follow the Lambert grid's x/y axes, not true east/north
+  (the difference is about 6° over Alabama and up to about 15° on the west coast). They are stored as
+  published, which is also what ecCodes, cfgrib and Herbie return. Rotate them downstream if you
+  need earth-relative winds.
+- **Times are naive UTC.** `run_time_utc` is the run date at 06:00; `valid_time_utc` is run time
+  plus the forecast hour.
+- **Coordinates are the grid point's**, not the input point's: the closest HRRR grid point by
+  great-circle distance, longitude in -180..180, stored as FLOAT. Two input points that share a grid
+  cell produce one set of rows. Points are never rejected for distance; one more than 3 km from its
+  grid point gets a warning.
+- **Night-time solar flux is a real zero.** Missing values are never stored, and never replaced by
+  zero.
+
+## Checking the result
+
+```bash
+duckdb -readonly data.db
+```
+
+```sql
+-- 1. Schema: the spec's 7 columns and types, in order
+DESCRIBE hrrr_forecasts;
+
+-- 2. No duplicate keys (expect no rows)
+SELECT run_time_utc, valid_time_utc, variable, latitude, longitude, count(*)
+FROM hrrr_forecasts GROUP BY ALL HAVING count(*) > 1;
+
+-- 3. Rows per run and variable (spec example: 9 points x 2 hours = 18 per variable)
+SELECT run_time_utc, variable, count(*) AS n_rows, min(valid_time_utc), max(valid_time_utc)
+FROM hrrr_forecasts GROUP BY ALL ORDER BY ALL;
+```
+
+The table also has a primary key on (run_time_utc, valid_time_utc, variable, latitude, longitude),
+so a duplicate cannot be inserted at all.
+
+## Re-runs, the cache, and failures
+
+- Before downloading, the tool asks DuckDB which (hour, variable) blocks have any requested row
+  missing, and works only on those. A re-run of a finished command makes no network requests.
+  Adding a point usually needs no download either: the messages are already cached.
+- Each downloaded message is saved as `.cache/hrrr/YYYYMMDD/fNN/<variable>.grib2` (written to a
+  `.part` file, then renamed). A cached file is used only if it is one complete GRIB2 message and
+  passes the same identity checks as a fresh download; otherwise it is downloaded again.
+  A full default run caches about 0.8 GB. Nothing is deleted automatically; `rm -rf .cache` is
+  always safe and costs only re-downloads.
+- Each forecast hour is inserted in one statement, so an hour is stored completely or not at all.
+  A variable that fails (not published, HTTP error, wrong field, missing value) is reported and
+  skipped; the other variables of that hour are still stored. Run the same command again to retry
+  only what is missing.
+
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Every requested row is in `data.db`. |
+| 1 | Something is still missing (a failure was reported), or no complete run was found. |
+| 2 | Invalid input. Nothing was downloaded and `data.db` was not touched. |
+
+## Design decisions
+
+The five choices the spec leaves open (D1-D5) are recorded in
+[docs/adr/0001-hrrr-ingestion-contract.md](docs/adr/0001-hrrr-ingestion-contract.md):
+the meaning of `--num-hours`, what a complete run is, how values and coordinates are stored,
+partial failure and exit codes, and the cache.
+
+## Repository tour
+
+| Path | What it holds |
+| --- | --- |
+| `src/hrrr_ingest/cli.py` | Argument parsing and validation, exit codes, `main()` |
+| `src/hrrr_ingest/inventory.py` | The 11-variable registry, S3 paths, `.idx` byte ranges, run completeness |
+| `src/hrrr_ingest/source.py` | HTTP GETs and listings against the public bucket, cache file I/O |
+| `src/hrrr_ingest/grib.py` | ecCodes decoding, identity and grid checks, nearest grid point |
+| `src/hrrr_ingest/store.py` | Table DDL, the missing-key query, the hourly insert |
+| `src/hrrr_ingest/ingest.py` | Orchestration of one run, and default-date discovery |
+| `tests/` | Offline tests: a fake S3 bucket, tiny real GRIB2 messages, real DuckDB files |
+| `tests/fixtures/` | Real HRRR `.idx` files and three real messages (TMP, SFCR, night-time VBDSF) |
+| `docs/research/` | What was verified about HRRR, and how |
+| `docs/adr/` | Decision records |
+
+To add a variable: add one `Variable(...)` line to `inventory.VARIABLES` with its `.idx` label and
+its decoded identity (check both with `grib_ls` on a real message), and add its row to
+`tests/fixtures/identities.txt`.
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+All tests are offline. They run the real ecCodes decoder on real HRRR messages and drive `main()`
+end to end against a fake S3 bucket that counts every request, with real DuckDB files. Mutation
+testing (`mutmut run --paths-to-mutate src/hrrr_ingest/<file>.py`) checks that the tests catch
+injected defects.
+
+## Docker
+
+```bash
+docker build -t hrrr-ingest .
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/data hrrr-ingest points.txt --num-hours 2
+```
+
+The container's working directory is the mounted folder, so `points.txt` is read from it and
+`data.db` and `.cache/` are written to it on the host. `--user` keeps those files owned by you.
+The image is `python:3.12-slim` with the dependencies installed from `uv.lock`; ecCodes ships as a
+manylinux wheel for both x86_64 and arm64.
+
+## Measured on a real run
+
+The spec's 9 points with the defaults (all 11 variables, 48 hours, run 2026-11-12 06z), on one
+laptop connection:
+
+| | First run | Same command again |
+| --- | --- | --- |
+| Rows added | 4,752 (9 × 11 × 48) | 0 |
+| HTTP requests | 576 (48 `.idx` + 528 messages), plus 1 listing for the default date | 0, plus 1 listing |
+| Bytes downloaded | 789 MB | 0 |
+| Wall time | 6 min | 1.4 s |
+| Cache size | 753 MB | unchanged |
+| Peak memory | about 290 MB | |
+
+The request count in the tool's summary line covers `.idx` files and messages; the one or two
+listing calls that find the default date are not included.

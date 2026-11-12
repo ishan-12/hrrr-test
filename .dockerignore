@@ -1,0 +1,8 @@
+.git
+.venv
+.cache
+.mutmut-cache
+data.db*
+notes
+tests
+docs
