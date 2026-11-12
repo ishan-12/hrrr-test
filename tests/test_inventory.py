@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import date
 from pathlib import Path
 
@@ -26,6 +27,11 @@ SPEC_NAMES = [
 def test_registry_has_the_spec_names_in_spec_order():
     assert list(VARIABLES) == SPEC_NAMES
     assert all(name == v.name for name, v in VARIABLES.items())
+
+
+def test_registry_entries_cannot_be_changed_at_run_time():
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        VARIABLES["temperature_2m"].level = 10
 
 
 def test_registry_matches_identities_decoded_from_real_messages():

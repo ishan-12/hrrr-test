@@ -116,6 +116,8 @@ class FakeS3:
     def _listing(self, url: str) -> bytes:
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
         assert query["list-type"] == ["2"]
+        # A client that ignores the continuation token would page forever; fail it instead.
+        assert self.calls.count((url, None, None)) == 1, f"listing page requested twice: {url}"
         offset = int(query.get("continuation-token", ["0"])[0])
         base = f"https://{inventory.BUCKET}/"
         keys = sorted(u.removeprefix(base) for u in self.objects if u.removeprefix(base).startswith(query["prefix"][0]))

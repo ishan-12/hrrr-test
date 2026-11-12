@@ -112,7 +112,7 @@ def ingest(con, run_date: date, hours, variables, points, cache_dir: Path, get) 
     lats, lons = grib.latlons(data)
     indices, distances = grib.nearest(lats, lons, points)
     for (lat, lon), km in zip(points, distances):
-        if km > FAR_KM:
+        if round(km, 1) > FAR_KM:  # judged on the distance as printed
             say(f"warning: point {lat},{lon} is {km:.1f} km from the nearest grid point")
     cells = list(dict.fromkeys(indices))
     coords = [(float(lats[i]), grib.lon180(float(lons[i]))) for i in cells]
@@ -152,7 +152,7 @@ def ingest(con, run_date: date, hours, variables, points, cache_dir: Path, get) 
     rows_after = con.execute("SELECT count(*) FROM hrrr_forecasts").fetchone()[0]
     say(
         f"{run_date} 06z: {len(cells)} grid cells, {rows_after - rows_before} new rows, "
-        f"{run.requests} requests ({run.bytes / 1e6:.1f} MB), "
+        f"{run.requests} requests ({run.bytes:,} bytes), "
         f"{len(still_missing)} (hour, variable) blocks still missing"
     )
     return not still_missing

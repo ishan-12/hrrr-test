@@ -1,5 +1,6 @@
 """Decode one GRIB2 message with ecCodes, check it is the field that was asked for, find nearest points."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 
@@ -29,7 +30,7 @@ class BadMessage(Exception):
     """The bytes are not a usable GRIB2 message for the requested field."""
 
 
-@dataclass(frozen=True)
+@dataclass
 class Field:
     identity: tuple  # values of IDENTITY_KEYS
     grid_md5: str  # ecCodes md5Section3: a hash of the whole grid definition
@@ -51,32 +52,34 @@ def expected_identity(variable: Variable, run_date: date, hour: int) -> tuple:
     )
 
 
-def _open(data: bytes):
+@contextmanager
+def _message(data: bytes):
+    """An ecCodes handle for data. Any ecCodes error, on opening or on reading a key, is a BadMessage:
+    ecCodes accepts some garbage on open and only fails at the first key lookup."""
+    handle = None
     try:
-        return eccodes.codes_new_from_message(data)
+        handle = eccodes.codes_new_from_message(data)
+        yield handle
     except eccodes.GribInternalError as e:
         raise BadMessage(f"ecCodes cannot read the message: {e}")
+    finally:
+        if handle is not None:
+            eccodes.codes_release(handle)
 
 
 def decode(data: bytes) -> Field:
-    handle = _open(data)
-    try:
+    with _message(data) as handle:
         identity = tuple(eccodes.codes_get(handle, key, ktype=int) for key in IDENTITY_KEYS)
         values = eccodes.codes_get_values(handle)
         if eccodes.codes_get(handle, "bitmapPresent"):
-            values[values == eccodes.codes_get(handle, "missingValue")] = np.nan
+            values = np.where(values == eccodes.codes_get(handle, "missingValue"), np.nan, values)
         return Field(identity, eccodes.codes_get(handle, "md5Section3"), values)
-    finally:
-        eccodes.codes_release(handle)
 
 
 def latlons(data: bytes) -> tuple[np.ndarray, np.ndarray]:
     """Latitude and longitude of every grid point, in the same order as Field.values."""
-    handle = _open(data)
-    try:
+    with _message(data) as handle:
         return eccodes.codes_get_array(handle, "latitudes"), eccodes.codes_get_array(handle, "longitudes")
-    finally:
-        eccodes.codes_release(handle)
 
 
 def check(field: Field, expected: tuple, grid_md5: str | None) -> None:
@@ -97,7 +100,7 @@ def values_at(field: Field, indices: list[int]) -> np.ndarray:
 
 def _unit_vectors(lats, lons) -> np.ndarray:
     lat, lon = np.radians(lats), np.radians(lons)
-    return np.stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)], axis=-1)
+    return np.column_stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)])
 
 
 def nearest(grid_lats, grid_lons, points) -> tuple[list[int], list[float]]:
@@ -116,4 +119,5 @@ def nearest(grid_lats, grid_lons, points) -> tuple[list[int], list[float]]:
 
 
 def lon180(lon: float) -> float:
-    return (lon + 180) % 360 - 180
+    """ecCodes gives HRRR longitudes in 0..360; store them in -180..180."""
+    return lon - 360 if lon >= 180 else lon

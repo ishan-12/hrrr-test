@@ -26,7 +26,10 @@ dev = [
 [tool.mutmut]
 paths_to_mutate = "src/hrrr_ingest/"
 tests_dir = "tests/"
-runner = "uv run pytest -x -q"
+# mutmut 2 counts only exit code 1 as "killed", but pytest exits 2 or 4 when a mutant breaks
+# collection or conftest import, so every failure is mapped to 1. pytest runs directly in the
+# project venv (no `uv run` or shell in between) so that mutmut's timeout kills the test process.
+runner = ".venv/bin/python -c 'import sys, pytest; sys.exit(min(pytest.main([\"-x\", \"-q\"]), 1))'"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

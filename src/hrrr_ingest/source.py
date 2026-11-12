@@ -41,7 +41,7 @@ def check_range(status: int, headers, body: bytes, start: int, end: int | None) 
     """Raise FetchError unless the response is exactly bytes start..end (end None: to end of file)."""
     if status != 206:
         raise FetchError(f"expected HTTP 206 for a range request, got {status}")
-    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", headers.get("Content-Range") or "")
+    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", str(headers.get("Content-Range")))
     if match is None:
         raise FetchError(f"bad Content-Range {headers.get('Content-Range')!r}")
     first, last, total = (int(g) for g in match.groups())
@@ -53,10 +53,9 @@ def check_range(status: int, headers, body: bytes, start: int, end: int | None) 
 def fetch(url: str, start: int | None = None, end: int | None = None, sleep=time.sleep) -> bytes:
     """GET a whole object, or bytes start..end of it. Retries timeouts, 429 and 5xx up to ATTEMPTS times."""
     headers = {} if start is None else {"Range": f"bytes={start}-{'' if end is None else end}"}
-    problem = ""
     for attempt in range(ATTEMPTS):
         if attempt:
-            sleep(2**attempt)
+            sleep(5 * attempt)
         try:
             status, response_headers, body = _http_get(url, headers)
         except (OSError, http.client.HTTPException) as e:
