@@ -116,8 +116,9 @@ retrying them forever.
 
 ## How the rule engine shaped this build (drafted by Claude)
 
-The engine's own report is kept with the private working notes. A copy is committed only if it
-passes the repository's leak scan.
+The engine's latest report is committed as [docs/ruler-report.txt](docs/ruler-report.txt). It
+passed the repository's leak scan, which was the condition for committing it. The same report is
+also kept with the private working notes.
 
 `llm-rule-engine` sits in Claude Code's hooks. It blocks every mutating action (file edit, shell
 command that writes, script run) until Claude files a **preflight**: a verdict and a specific note
@@ -127,8 +128,24 @@ shortcuts). It also refuses to let the turn end until a **postflight** cites mac
 evidence: a passing test run after the last edit, and a mutation run on every changed source file
 with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
 
-**Gated turns.** The whole build ran as one gated turn. The preflight was accepted on the first
-submission, at full scope. The postflight is recorded below.
+**Gated turns.** The session had five turns. Only those that changed something need a preflight
+and a postflight.
+
+| Turn | What it did | Gate |
+| --- | --- | --- |
+| 1 | The whole build, through review | Preflight accepted first time; postflight rejected once, then accepted (below) |
+| 2 | A question: had the work been reviewed? | Read-only, no gate needed |
+| 3 | The three reviewers re-read the last docs commits; two doc errors fixed | Preflight and postflight accepted first time |
+| 4 | `ruler doctor` (only the Go tools govulncheck and go-mutesting missing; this repo has no Go) | Read-only, no gate needed |
+| 5 | Fixes from an outside review (below) | Preflight accepted first time; result in [docs/ruler-report.txt](docs/ruler-report.txt) |
+
+Turn 5 fixed four issues, test-first:
+- A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
+  attempts each) during an outage.
+- A locked or unusable `data.db`, or any DuckDB or OS error during a run, is now a one-line error
+  with exit 1, not a traceback.
+- `read_cached` and `write_atomic` are now mutation-tested; only the raw HTTP call is excluded.
+- The variable registry is now a read-only mapping.
 
 **Every time it blocked something** (all before the preflight, none twice):
 
@@ -152,7 +169,8 @@ submission, at full scope. The postflight is recorded below.
     17 minutes. The runner in `pyproject.toml` now calls pytest directly and maps any failure
     to exit 1.
   - Real test gaps it found, now covered by tests:
-    - the registry could be changed at run time (it is now frozen);
+    - a registry entry could be changed at run time (each `Variable` is now a frozen dataclass;
+      since turn 5 the `VARIABLES` mapping itself is read-only too);
     - a message assertion matched a substring, so a corrupted message still passed;
     - the 3 km distance warning was not tested at its boundary;
     - a cache-scan `continue` was not tested where `break` would differ.
@@ -165,15 +183,16 @@ submission, at full scope. The postflight is recorded below.
     - a modulo-based longitude conversion;
     - a `found = None` placeholder.
 
-  Final result: 0 surviving mutants in all six modules. One infinite-loop mutant (walking the
-  default date forwards) is caught by mutmut's timeout.
+  Final result: 0 surviving mutants in all six modules. The raw HTTP call (`source._http_get`) is
+  the only code excluded from mutation, marked `# pragma: no mutate`. One infinite-loop mutant
+  (walking the default date forwards) is caught by mutmut's timeout.
 - **Survivors approved by the owner:** none. None had to be brought to the owner, because every
   survivor was either killed by a better test or removed by rewriting the line.
 
 The engine also records each mutmut run as evidence when it starts. That includes one `source.py`
 run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore not cited.
 
-**The postflight.**
+**The postflight (turn 1).**
 
 - **First submission: rejected, with 9 errors.**
   - One note did not name a changed file.

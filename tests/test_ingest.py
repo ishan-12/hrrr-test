@@ -520,3 +520,86 @@ def test_an_explicit_date_makes_no_listing_call(s3):
     write_points(5)
     assert ingest(*ONE) == 0
     assert s3.calls and not any("?" in call[0] for call in s3.calls)
+
+
+# --- outside review: outages and unusable databases ------------------------------------------------
+
+
+def test_a_failing_idx_is_fetched_once_and_fails_its_hour_once(s3, capsys):
+    s3.add_run()
+    outage = source.FetchError(f"HTTP 503 for {F01}.idx, after 3 attempts")
+    s3.failures[F01 + ".idx"] = outage
+    write_points(5)
+    assert ingest(*ARGS) == 1
+    assert s3.calls.count((F01 + ".idx", None, None)) == 1
+    assert table() == [r for r in sorted_expected([5]) if r[0] == RUN]
+    hour_lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("f01")]
+    assert hour_lines == [f"f01: {outage}"]
+
+
+def test_a_failing_idx_stops_the_grid_bootstrap_at_once(s3, capsys):
+    s3.add_run()
+    s3.failures[F00 + ".idx"] = source.FetchError(f"TimeoutError: timed out for {F00}.idx, after 3 attempts")
+    write_points(5)
+    assert ingest(*ARGS) == 1
+    assert s3.calls == [(F00 + ".idx", None, None)]
+    assert capsys.readouterr().err.splitlines() == [
+        "no usable cached message for 2025-04-24; downloading one to read the grid",
+        f"f00: TimeoutError: timed out for {F00}.idx, after 3 attempts",
+        "2025-04-24 06z: could not read the grid; nothing stored",
+    ]
+
+
+def test_a_404_on_one_message_range_fails_only_that_block(s3, monkeypatch, capsys):
+    s3.add_run()
+    write_points(5)
+    real = s3.__class__.__call__
+
+    def missing_range(self, url, start=None, end=None):
+        if (url, start, end) == message_range(self, 1, "surface_pressure"):
+            self.calls.append((url, start, end))
+            raise source.NotPublished(f"not published: {url}")
+        return real(self, url, start, end)
+
+    monkeypatch.setattr(s3.__class__, "__call__", missing_range)
+    assert ingest(*ARGS) == 1
+    assert [r[4] for r in table() if r[0] == datetime(2025, 4, 24, 7)] == ["temperature_2m"]
+    assert f"f01 surface_pressure: not published: {F01}" in capsys.readouterr().err.splitlines()
+
+
+def unusable(kind):
+    path = Path("data.db")
+    if kind == "directory":
+        path.mkdir()
+    else:
+        path.write_bytes(b"this is not a DuckDB database file\n" * 200)
+    with pytest.raises(duckdb.Error) as exc:
+        duckdb.connect(str(path))
+    return str(exc.value).splitlines()[0]
+
+
+@pytest.mark.parametrize("kind", ["directory", "garbage file"])
+def test_an_unusable_database_is_one_line_and_exit_1(s3, capsys, kind):
+    s3.add_run()
+    write_points(5)
+    first_line = unusable(kind)
+    assert ingest(*ONE) == 1
+    assert capsys.readouterr().err.splitlines() == [f"hrrr-ingest: {first_line}"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [duckdb.IOException("IO Error: disk I/O error\nwhile reading block 7"), OSError(28, "No space left on device")],
+)
+def test_a_database_or_os_error_mid_run_is_one_line_and_exit_1(s3, monkeypatch, capsys, error):
+    s3.add_run()
+    write_points(5)
+
+    def failing_missing(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(store, "missing", failing_missing)
+    assert ingest(*ONE) == 1
+    err = capsys.readouterr().err.splitlines()
+    assert err[-1] == f"hrrr-ingest: {str(error).splitlines()[0]}"
+    assert not any("Traceback" in line for line in err)

@@ -9,6 +9,8 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import duckdb
+
 from hrrr_ingest import ingest, source, store
 from hrrr_ingest.inventory import VARIABLES
 
@@ -107,10 +109,14 @@ def main(argv: list[str] | None = None) -> int:
     except (source.FetchError, LookupError) as e:
         print(f"hrrr-ingest: cannot find the latest complete run: {e}", file=sys.stderr)
         return 1
-    with store.connect(DB_PATH) as con:
-        complete = ingest.ingest(
-            con, run_date, range(args.num_hours), args.variables, args.points, CACHE_DIR, source.fetch
-        )
+    try:
+        with store.connect(DB_PATH) as con:
+            complete = ingest.ingest(
+                con, run_date, range(args.num_hours), args.variables, args.points, CACHE_DIR, source.fetch
+            )
+    except (duckdb.Error, OSError) as e:  # locked, unusable or unwritable data.db, a full disk, ...
+        print(f"hrrr-ingest: {str(e).splitlines()[0]}", file=sys.stderr)
+        return 1
     return 0 if complete else 1
 
 

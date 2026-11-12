@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import date
+from types import MappingProxyType
 
 BUCKET = "noaa-hrrr-bdp-pds.s3.amazonaws.com"
 FIRST_COMPLETE_RUN = date(2020, 12, 3)  # the first 06z run published with all 49 hours
@@ -20,7 +21,8 @@ class Variable:
 
 
 # Verified with grib_get on 2025-04-24 06z f00/f01/f02/f48 messages; see docs/research/hrrr-variables.md.
-VARIABLES = {
+# Read-only, like each Variable: nothing can change the registry at run time.
+VARIABLES = MappingProxyType({
     v.name: v
     for v in (
         Variable("surface_pressure", "PRES:surface", 0, 3, 0, 1, 0),
@@ -35,7 +37,7 @@ VARIABLES = {
         Variable("u_component_wind_80m", "UGRD:80 m above ground", 0, 2, 2, 103, 80),
         Variable("v_component_wind_80m", "VGRD:80 m above ground", 0, 2, 3, 103, 80),
     )
-}
+})
 
 
 def run_prefix(run_date: date) -> str:

@@ -111,15 +111,15 @@ def is_complete_grib2(data: bytes) -> bool:
 
 
 def read_cached(path: Path) -> bytes | None:
-    try:  # pragma: no mutate
-        return path.read_bytes()  # pragma: no mutate
-    except OSError:  # missing or unreadable: treated as not cached  # pragma: no mutate
-        return None  # pragma: no mutate
+    try:
+        return path.read_bytes()
+    except OSError:  # missing or unreadable: treated as not cached
+        return None
 
 
 def write_atomic(path: Path, data: bytes) -> None:
     """Write to a temporary file in the same folder, close it, then rename it into place."""
-    path.parent.mkdir(parents=True, exist_ok=True)  # pragma: no mutate
-    partial = path.with_name(path.name + ".part")  # pragma: no mutate
-    partial.write_bytes(data)  # pragma: no mutate
-    os.replace(partial, path)  # pragma: no mutate
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".part")
+    partial.write_bytes(data)
+    os.replace(partial, path)

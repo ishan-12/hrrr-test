@@ -32,6 +32,10 @@ def test_registry_has_the_spec_names_in_spec_order():
 def test_registry_entries_cannot_be_changed_at_run_time():
     with pytest.raises(dataclasses.FrozenInstanceError):
         VARIABLES["temperature_2m"].level = 10
+    with pytest.raises(TypeError):
+        VARIABLES["temperature_2m"] = VARIABLES["dewpoint_2m"]
+    with pytest.raises(TypeError):
+        del VARIABLES["temperature_2m"]
 
 
 def test_registry_matches_identities_decoded_from_real_messages():

@@ -184,6 +184,10 @@ testing checks that the tests catch injected defects; run it from the project fo
 uv run mutmut run --CI --paths-to-mutate src/hrrr_ingest/<file>.py
 ```
 
+Result: 0 surviving mutants in all six modules. The one exclusion is `source._http_get`, the raw
+`urllib` call, whose lines are marked `# pragma: no mutate`. The status, range and retry decisions
+around it are mutation-tested.
+
 Test names and comments refer to these acceptance tests (T1-T11 offline, T12 manual):
 
 | | What it proves |

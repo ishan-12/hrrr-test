@@ -19,6 +19,10 @@ FAR_KM = 3.0  # inside HRRR's CONUS coverage every point is within about 2.1 km 
 BLOCK_ERRORS = (source.FetchError, grib.BadMessage, inventory.IdxError)  # one (hour, variable) fails
 
 
+class HourUnavailable(Exception):
+    """The hour's .idx could not be fetched, so none of its variables can be: give up on the hour once."""
+
+
 def say(message: str) -> None:
     print(message, file=sys.stderr)
 
@@ -68,7 +72,10 @@ class Run:
     def download(self, hour: int, variable, grid_md5=None):
         url = inventory.http_url(self.run_date, hour)
         if hour not in self.idx:
-            self.idx[hour] = self.fetch(url + ".idx").decode("ascii", "replace")
+            try:
+                self.idx[hour] = self.fetch(url + ".idx").decode("ascii", "replace")
+            except source.FetchError as e:  # 404, 403, outage: the whole hour is out of reach
+                raise HourUnavailable(e)
         start, end = inventory.byte_range(self.idx[hour], variable)
         data = self.fetch(url, start, end)
         field = self.checked(data, hour, variable, grid_md5)
@@ -101,7 +108,7 @@ class Run:
         for variable in variables:
             try:
                 return self.download(hours[0], variable)
-            except source.NotPublished as e:
+            except HourUnavailable as e:
                 say(f"f{hours[0]:02d}: {e}")
                 return None
             except BLOCK_ERRORS as e:
@@ -144,7 +151,7 @@ def ingest(con, run_date: date, hours, variables, points, cache_dir: Path, get) 
             try:
                 _, field = run.message(hour, variable, grid_field.grid_md5)
                 values = grib.values_at(field, cells)
-            except source.NotPublished as e:
+            except HourUnavailable as e:
                 say(f"f{hour:02d}: {e}")
                 break
             except BLOCK_ERRORS as e:
