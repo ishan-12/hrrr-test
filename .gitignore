@@ -1,0 +1,36 @@
+# Challenge materials (spec is tracked as comity-coding-challenge-weather.md)
+*.pdf
+*.zip
+
+# Output database
+data.db
+data.db.wal
+
+# Downloaded HRRR data / caches (small committed test fixtures are the exception)
+*.grib2
+!tests/fixtures/*.grib2
+*.grib2.*.idx
+.cache/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage*
+dist/
+build/
+*.egg-info/
+
+# Mutation testing (mutmut 2.x)
+.mutmut-cache
+html/
+
+# Private working notes (not part of the submission)
+notes/
+
+# Personal Claude Code overrides
+.claude/settings.local.json
+
+.DS_Store

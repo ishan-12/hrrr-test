@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "_comment": "llm-rule-engine policy for the hrrr-ingest take-home. R3 (1 ms latency budget) does not apply to a network-bound batch CLI; R11 (threat model) has no auth or credential surface to protect because HRRR is a public, unsigned S3 bucket.",
+  "enabled": true,
+  "strict": false,
+  "allow_session_off": true,
+  "stop_block_limit": 3,
+  "scope_tiers": true,
+  "reuse_last": true,
+  "disable": ["R3", "R11"],
+  "rules": {
+    "R9": {
+      "_comment": "mutmut 2.x is installed, so mutation evidence is required. Every surviving mutant needs the owner's own approval ('approve mutants <ids>'), case by case.",
+      "mutation_mode": "auto",
+      "max_surviving_mutants": 0
+    }
+  },
+  "packages": {
+    "_comment": "Adding any package not listed here blocks until the user approves it.",
+    "policy": "allowlist",
+    "approved": {
+      "python": [
+        "cfgrib", "eccodes", "eccodeslib", "xarray", "numpy", "pandas", "scipy",
+        "duckdb", "click", "typer", "httpx", "requests",
+        "pytest", "mutmut", "uv_build"
+      ]
+    }
+  },
+  "perf": {
+    "hot_paths": [],
+    "bench_commands": []
+  },
+  "verifiers": {
+    "_comment": "on_missing=block so a missing scanner (osv-scanner for uv.lock) fails loudly instead of silently waiving R7.",
+    "dep_audit": { "timeout_s": 120, "cache_ttl_h": 24, "on_missing": "block" },
+    "latest_check": "warn",
+    "test_commands": ["uv run pytest", "uv run python -m pytest"]
+  },
+  "extra_readonly": [
+    "(^|/)grib_(ls|dump|get) ",
+    "^aws s3 ls .*--no-sign-request",
+    "^duckdb -readonly "
+  ],
+  "extra_exempt_paths": []
+}
