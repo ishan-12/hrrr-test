@@ -118,9 +118,9 @@ so a duplicate cannot be inserted at all.
 
 - Before downloading, the tool asks DuckDB which (hour, variable) blocks have any requested row
   missing, and works only on those. A re-run of a finished command with an explicit `--run-date`
-  and an intact cache makes no network requests (the default date costs one or two listing requests; a
-  deleted cache costs one message download to read the grid). Adding a point usually needs no
-  download either: the messages are already cached.
+  and an intact cache makes no network requests (the default date costs one or two listing
+  requests; a deleted cache costs one message download to read the grid). Adding a point usually
+  needs no download either: the messages are already cached.
 - Each downloaded message is saved as `.cache/hrrr/YYYYMMDD/fNN/<variable>.grib2` (written to a
   `.part` file, then renamed). A cached file is used only if it is one complete GRIB2 message and
   passes the same identity checks as a fresh download; otherwise it is downloaded again.

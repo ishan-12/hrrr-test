@@ -37,8 +37,11 @@ Observations that shape the code:
 - `grib_ls` prints `typeOfFirstFixedSurface` as the abbreviation `sfc` for **every** field, including
   the 2 m and 10 m ones. The numeric value (`:i`) is 1 or 103. The code compares numbers.
 - All fields are instantaneous (`productDefinitionTemplateNumber` 0, which the identity check
-  requires; a reviewer confirmed it on 176 headers across f00-f48 of two runs); `step` equals the forecast hour
-  (`stepUnits` 1 = hours) and `dataDate`/`dataTime` are `20250424`/`600`.
+  requires); `step` equals the forecast hour (`stepUnits` 1 = hours) and `dataDate`/`dataTime`
+  are `20250424`/`600`. Template 0 was confirmed by two reviewer checks: the headers of the 11
+  fields at f00, f01, f02, f12, f18, f24, f47 and f48 of the 2025-04-24 and 2026-11-11 06z runs
+  (176 messages, 500-byte ranges), and all 532 cached messages (f00-f47 of 2026-11-12, f00-f01
+  of 2025-04-24).
 - `resolutionAndComponentFlags` is 8 on all messages: winds are **grid-relative**, not earth-relative.
 - At f00 (06:00 UTC, night over CONUS) VBDSF and VDDSF are 188-byte `grid_simple` messages: a
   constant field of zeros. That is a real zero, not missing data. `bitmapPresent` is 0 on all 11.

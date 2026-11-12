@@ -185,6 +185,8 @@ run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore 
 - **What was done about it.** All edits were finished and committed. Then the full test suite and
   the six mutation runs were repeated back to back, with only read-only commands in between, and
   the postflight was resubmitted.
-- **The resubmission and `ruler report`** were the last actions of the session. Their outcome is
-  reported to the owner directly and saved with the private notes.
+- **The resubmission was accepted**, and `ruler report` then exited 0 with `VERDICT: PASS`
+  ([docs/ruler-report.txt](docs/ruler-report.txt)). Its "postflights with FAIL: 0" does not hide
+  the first rejection. As Claude reads it, the report counts accepted postflights that carry a FAIL
+  verdict. A rejected submission is never accepted, so it isn't in that count.
 
