@@ -5,11 +5,16 @@ Invalid input is rejected here, before any network request or database change.
 """
 
 import argparse
+import sys
 from datetime import date, datetime, timezone
+from pathlib import Path
 
+from hrrr_ingest import ingest, source, store
 from hrrr_ingest.inventory import VARIABLES
 
 MAX_HOURS = 48
+DB_PATH = "data.db"
+CACHE_DIR = Path(".cache/hrrr")
 
 
 def utc_today() -> date:
@@ -93,3 +98,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="forecast hours to ingest, f00 to f(N-1), 1-48 (default: 48)",
     )
     return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        run_date = args.run_date or ingest.latest_complete_date(utc_today(), source.fetch)
+    except (source.FetchError, LookupError) as e:
+        print(f"hrrr-ingest: cannot find the latest complete run: {e}", file=sys.stderr)
+        return 1
+    with store.connect(DB_PATH) as con:
+        complete = ingest.ingest(
+            con, run_date, range(args.num_hours), args.variables, args.points, CACHE_DIR, source.fetch
+        )
+    return 0 if complete else 1
+
+
+def run() -> None:
+    sys.exit(main())
