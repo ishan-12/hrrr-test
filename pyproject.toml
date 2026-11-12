@@ -1,0 +1,32 @@
+[project]
+name = "hrrr-ingest"
+version = "0.1.0"
+description = "Ingest NOAA HRRR 06z forecasts for a list of points into DuckDB"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=2.0.0",
+    "eccodes==2.50.0",
+    "eccodeslib>=2.50,<2.51 ; sys_platform != 'win32'",
+    "numpy>=2.5.4",
+]
+
+[project.scripts]
+hrrr-ingest = "hrrr_ingest.cli:run"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mutmut<3",
+    "pytest>=9.2.0",
+]
+
+[tool.mutmut]
+paths_to_mutate = "src/hrrr_ingest/"
+tests_dir = "tests/"
+runner = "uv run pytest -x -q"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
