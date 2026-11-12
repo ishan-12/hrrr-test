@@ -137,7 +137,7 @@ and a postflight.
 | 2 | A question: had the work been reviewed? | Read-only, no gate needed |
 | 3 | The three reviewers re-read the last docs commits; two doc errors fixed | Preflight and postflight accepted first time |
 | 4 | `ruler doctor` (only the Go tools govulncheck and go-mutesting missing; this repo has no Go) | Read-only, no gate needed |
-| 5 | Fixes from an outside review (below) | Preflight accepted first time; result in [docs/ruler-report.txt](docs/ruler-report.txt) |
+| 5 | Fixes from an outside review (below) | Preflight accepted first time; postflight rejected once (the tests were already committed, so R9 needed a note naming which tests cover the changed files), then accepted; `ruler report` exit 0, PASS ([docs/ruler-report.txt](docs/ruler-report.txt)) |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
