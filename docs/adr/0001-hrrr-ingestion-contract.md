@@ -36,8 +36,7 @@ no listing call.
 - One key per grid cell: two input points that snap to the same cell produce one set of rows.
 - A missing or non-finite value is never stored, and never replaced by zero. A real zero (night-time
   solar flux) is stored as zero.
-- Every input point is accepted; the distance to its grid point is reported, with a warning above
-  3 km.
+- Every input point is accepted; a point more than 3 km from its grid point gets a warning.
 
 **D4. Partial failure: one transaction per forecast hour.**
 The variable blocks that decode and pass every check for an hour are committed together. A block
@@ -51,7 +50,8 @@ an insert error rolls back that hour only. Exit codes:
 One file per message (`YYYYMMDD/fNN/<variable>.grib2`), written to a temporary file and renamed into
 place. A cached file is reused only if it is a complete GRIB2 message (its length matches the
 length in its own header and it ends in `7777`) and it passes the same identity checks as a fresh
-download; otherwise it is deleted and fetched again. There is no automatic clean-up; a full default
+download; otherwise it is downloaded again and the new copy replaces it. If the cache cannot be
+written (full or read-only disk), the downloaded message is still used and the failure reported. There is no automatic clean-up; a full default
 run caches about 0.8 GB. Deleting the folder is always safe.
 
 ## Alternatives considered

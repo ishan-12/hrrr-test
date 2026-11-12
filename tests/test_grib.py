@@ -53,7 +53,7 @@ def edited(data: bytes, **keys) -> bytes:
 
 
 def test_expected_identity():
-    assert grib.expected_identity(VARIABLES["u_component_wind_80m"], D, 7) == (0, 2, 2, 103, 80, 1, 7, 20250424, 600)
+    assert grib.expected_identity(VARIABLES["u_component_wind_80m"], D, 7) == (0, 2, 2, 103, 80, 0, 1, 7, 20250424, 600)
 
 
 @pytest.mark.parametrize("name, variable", REAL.items())
@@ -187,3 +187,9 @@ def test_nearest_distance_on_a_known_offset():
 )
 def test_lon180(lon, expected):
     assert grib.lon180(lon) == pytest.approx(expected)
+
+
+def test_an_averaged_or_accumulated_field_is_rejected():
+    field = grib.decode(edited(make_message("temperature_2m"), productDefinitionTemplateNumber=8))
+    with pytest.raises(grib.BadMessage):
+        grib.check(field, grib.expected_identity(VARIABLES["temperature_2m"], D, 0), None)

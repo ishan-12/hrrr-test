@@ -81,7 +81,7 @@ def test_run_date_today_is_allowed_tomorrow_is_not(capsys, tmp_path):
     assert message == f"argument --run-date: {tomorrow} is in the future (UTC)"
 
 
-@pytest.mark.parametrize("text", ["2025-13-01", "yesterday", ""])
+@pytest.mark.parametrize("text", ["2025-13-01", "yesterday", "", "20250424", "2025-W17-4"])
 def test_bad_run_date(capsys, tmp_path, text):
     assert error(capsys, tmp_path, "31,-88", "--run-date", text) == f"argument --run-date: expected YYYY-MM-DD, got {text!r}"
 
@@ -121,3 +121,18 @@ def test_help_text(monkeypatch):
         "  --num-hours NUM_HOURS\n"
         "                        forecast hours to ingest, f00 to f(N-1), 1-48 (default: 48)\n"
     )
+
+
+def test_utc_today_is_the_utc_date_not_the_local_one(monkeypatch, utc_tz):
+    from datetime import date, datetime, timezone
+
+    from hrrr_ingest import cli
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2025, 4, 25, 2, 0, tzinfo=timezone.utc)  # 19:00 on 04-24 in Los Angeles
+            return instant.astimezone(tz) if tz else instant.astimezone().replace(tzinfo=None)
+
+    monkeypatch.setattr(cli, "datetime", Frozen)
+    assert cli.utc_today() == date(2025, 4, 25)

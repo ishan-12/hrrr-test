@@ -123,7 +123,7 @@ def test_first_run_fetches_each_index_once_and_each_message_once(s3, capsys):
     ]
     sizes = sum(len(s3(*call)) for call in list(s3.calls))
     assert capsys.readouterr().err.splitlines() == [
-        "no cached message for 2025-04-24; downloading one to read the grid",
+        "no usable cached message for 2025-04-24; downloading one to read the grid",
         f"2025-04-24 06z: 2 grid cells, 8 new rows, 6 requests ({sizes:,} bytes), "
         "0 (hour, variable) blocks still missing",
     ]
@@ -257,8 +257,8 @@ def test_one_bad_variable_keeps_the_rest_of_its_hour_and_a_rerun_fetches_only_it
     write_points(5)
     assert ingest(*ARGS) == 1
     assert table() == [r for r in sorted_expected([5]) if not (r[0] == datetime(2025, 4, 24, 7) and r[4] == "surface_pressure")]
-    assert "f01 surface_pressure: wrong field: expected (0, 3, 0, 1, 0, 1, 1, 20250424, 600), " \
-        "got (0, 0, 0, 103, 2, 1, 1, 20250424, 600)" in capsys.readouterr().err.splitlines()
+    assert "f01 surface_pressure: wrong field: expected (0, 3, 0, 1, 0, 0, 1, 1, 20250424, 600), " \
+        "got (0, 0, 0, 103, 2, 0, 1, 1, 20250424, 600)" in capsys.readouterr().err.splitlines()
     assert not Path(".cache/hrrr/20250424/f01/surface_pressure.grib2").exists()
     s3.add_run(hours=[1])
     s3.calls.clear()
@@ -294,16 +294,68 @@ def test_an_unpublished_hour_is_reported_once_and_exits_1(s3, capsys):
     assert ingest(*ARGS) == 1
     assert table() == [r for r in sorted_expected([5]) if r[0] == RUN]
     assert s3.calls.count((F01 + ".idx", None, None)) == 1
-    assert f"f01: not published: {F01}.idx" in capsys.readouterr().err.splitlines()
+    err = capsys.readouterr().err.splitlines()
+    assert f"f01: not published: {F01}.idx" in err
+    sizes = sum(len(s3(*call)) for call in list(s3.calls) if call[0] != F01 + ".idx")
+    # The failed .idx request is counted too: 1 + 2 messages + 1 failed .idx = 4.
+    assert err[-1] == (
+        f"2025-04-24 06z: 1 grid cells, 2 new rows, 4 requests ({sizes:,} bytes), "
+        "2 (hour, variable) blocks still missing"
+    )
 
 
-def test_an_unpublished_run_stores_nothing_and_exits_1(s3, capsys):
+def test_an_unpublished_run_asks_once_stores_nothing_and_exits_1(s3, capsys):
     write_points(5)
     assert ingest(*ARGS) == 1
     assert table() == []
+    assert s3.calls == [(F00 + ".idx", None, None)]
+    assert capsys.readouterr().err.splitlines() == [
+        "no usable cached message for 2025-04-24; downloading one to read the grid",
+        f"f00: not published: {F00}.idx",
+        "2025-04-24 06z: could not read the grid; nothing stored",
+    ]
+
+
+def test_an_idx_file_with_undecodable_bytes_fails_only_that_hour(s3, capsys):
+    s3.add_run()
+    s3.objects[F01 + ".idx"] = s3.objects[F01 + ".idx"].replace(b"TMP:2 m", b"TMP:\xff m")
+    write_points(5)
+    assert ingest("--variables", "temperature_2m", "--num-hours", "2") == 1
+    assert table() == [expected_row(0, "temperature_2m", 5)]
+    assert "f01 temperature_2m: 'TMP:2 m above ground' appears 0 times in the .idx file" in capsys.readouterr().err.splitlines()
+
+
+def test_an_unwritable_cache_costs_the_cache_not_the_data(s3, capsys):
+    s3.add_run()
+    write_points(5)
+    Path(".cache").write_text("not a folder")
+    assert ingest(*ONE) == 0
+    assert table() == [expected_row(0, "temperature_2m", 5)]
+    # Nothing can be cached, so the grid bootstrap and the block each download the message once.
+    assert len(s3.message_calls()) == 2
+    warnings = [line for line in capsys.readouterr().err.splitlines() if "could not cache" in line]
+    assert len(warnings) == 2 and len(set(warnings)) == 1
+    assert warnings[0].startswith("f00 temperature_2m: could not cache the message (")
+    assert warnings[0].endswith("); using it anyway")
+
+
+def test_a_bad_cached_file_does_not_stop_the_grid_scan_and_is_reported_once(s3, capsys):
+    s3.add_run()
+    write_points(5)
+    f00_only = ("--variables", TWO_VARS, "--num-hours", "1")  # so the only good file is in f00
+    assert ingest(*f00_only) == 0
+    pres = Path(".cache/hrrr/20250424/f00/surface_pressure.grib2")
+    pres.write_bytes(pres.read_bytes()[:-1])  # surface_pressure is scanned before temperature_2m
+    with duckdb.connect("data.db") as con:
+        con.execute("DELETE FROM hrrr_forecasts WHERE variable = 'surface_pressure'")
+    s3.calls.clear()
+    capsys.readouterr()
+    assert ingest(*f00_only) == 0
     err = capsys.readouterr().err.splitlines()
-    assert err[-1] == "2025-04-24 06z: could not read the grid; nothing stored"
-    assert f"f00 temperature_2m: not published: {F00}.idx" in err
+    assert err[0] == "f00 surface_pressure: cached copy rejected (not one complete GRIB2 message); downloading again"
+    assert sum("cached copy rejected" in line for line in err) == 1
+    assert not any("downloading one to read the grid" in line for line in err)
+    assert s3.message_calls() == [message_range(s3, 0, "surface_pressure")]
 
 
 def test_the_grid_bootstrap_tries_the_next_variable(s3):
@@ -342,24 +394,24 @@ def test_messages_are_cached_under_date_hour_and_name(s3):
     "damage, reason",
     [
         (lambda m: m[:-1], "not one complete GRIB2 message"),
-        (lambda m: make_message("surface_pressure"), "wrong field: expected (0, 0, 0, 103, 2, 1, 0, 20250424, 600), got (0, 3, 0, 1, 0, 1, 0, 20250424, 600)"),
+        (lambda m: make_message("surface_pressure"), "wrong field: expected (0, 0, 0, 103, 2, 0, 1, 0, 20250424, 600), got (0, 3, 0, 1, 0, 0, 1, 0, 20250424, 600)"),
     ],
 )
 def test_a_bad_cached_message_is_downloaded_again(s3, capsys, damage, reason):
     s3.add_run()
     write_points(5)
-    assert ingest(*ONE) == 0
+    assert ingest(*ARGS) == 0
     CACHED_TMP.write_bytes(damage(CACHED_TMP.read_bytes()))
     with duckdb.connect("data.db") as con:
         con.execute("DELETE FROM hrrr_forecasts")
     s3.calls.clear()
     capsys.readouterr()
-    assert ingest(*ONE) == 0
+    assert ingest(*ARGS) == 0
     assert s3.message_calls() == [message_range(s3, 0, "temperature_2m")]
     assert CACHED_TMP.read_bytes() == make_message("temperature_2m")
     err = capsys.readouterr().err.splitlines()
     assert f"f00 temperature_2m: cached copy rejected ({reason}); downloading again" in err
-    assert table() == [expected_row(0, "temperature_2m", 5)]
+    assert table() == sorted_expected([5])
 
 
 def test_a_leftover_partial_download_is_ignored_and_replaced(s3):
@@ -395,7 +447,7 @@ def test_a_deleted_cache_costs_one_bootstrap_download_and_no_rows(s3, capsys):
     assert table() == before
     sizes = sum(len(s3(*call)) for call in list(s3.calls))
     assert capsys.readouterr().err.splitlines() == [
-        "no cached message for 2025-04-24; downloading one to read the grid",
+        "no usable cached message for 2025-04-24; downloading one to read the grid",
         f"2025-04-24 06z: 1 grid cells, 0 new rows, 2 requests ({sizes:,} bytes), "
         "0 (hour, variable) blocks still missing",
     ]

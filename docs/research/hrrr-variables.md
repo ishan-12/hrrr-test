@@ -27,7 +27,8 @@ registry in `src/hrrr_ingest/inventory.py` against it.
 | `u_component_wind_80m` | `UGRD:80 m above ground` | 0/2/2 | 103, 80 | `u` | m s-1 |
 | `v_component_wind_80m` | `VGRD:80 m above ground` | 0/2/3 | 103, 80 | `v` | m s-1 |
 
-This agrees row for row with the identity table in the project plan.
+This agrees row for row with the identity table the (private) build plan proposed; that table was
+treated as a claim to check, not as a source.
 
 Observations that shape the code:
 
@@ -40,6 +41,12 @@ Observations that shape the code:
 - `resolutionAndComponentFlags` is 8 on all messages: winds are **grid-relative**, not earth-relative.
 - At f00 (06:00 UTC, night over CONUS) VBDSF and VDDSF are 188-byte `grid_simple` messages: a
   constant field of zeros. That is a real zero, not missing data. `bitmapPresent` is 0 on all 11.
+
+Checked during review (2026-11-12 06z, f11, at 33.7845,-86.0524, from a byte-ranged
+`DSWRF:surface` message and the stored values): DSWRF = 642.1, VBDSF = 905, VDDSF = 93.2 W m-2.
+With the sun about 38° up, VBDSF × sin(38.1°) + VDDSF ≈ 651, close to DSWRF, while VBDSF + VDDSF
+is far above it. So VBDSF behaves as beam irradiance on a surface facing the sun (direct normal),
+not on a horizontal surface. One point and one hour; the values are stored as published either way.
 
 ## Grid
 

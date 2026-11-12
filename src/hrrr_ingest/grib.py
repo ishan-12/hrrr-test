@@ -19,6 +19,7 @@ IDENTITY_KEYS = (
     "parameterNumber",
     "typeOfFirstFixedSurface",
     "level",
+    "productDefinitionTemplateNumber",
     "indicatorOfUnitOfTimeRange",
     "forecastTime",
     "dataDate",
@@ -45,6 +46,7 @@ def expected_identity(variable: Variable, run_date: date, hour: int) -> tuple:
         variable.number,
         variable.level_type,
         variable.level,
+        0,  # product definition template 4.0: an instantaneous value, not an average or accumulation
         hours,
         hour,
         int(f"{run_date:%Y%m%d}"),

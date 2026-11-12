@@ -70,7 +70,8 @@ How each identity was verified: [docs/research/hrrr-variables.md](docs/research/
 Conventions:
 
 - **Winds are grid-relative.** HRRR's u/v follow the Lambert grid's x/y axes, not true east/north
-  (the difference is about 6° over Alabama and up to about 15° on the west coast). They are stored as
+  (the rotation is sin(38.5°) × (longitude + 97.5°): about 6° over Alabama, about 17° on the
+  west coast and 19° in Maine). They are stored as
   published, which is also what ecCodes, cfgrib and Herbie return. Rotate them downstream if you
   need earth-relative winds.
 - **Times are naive UTC.** `run_time_utc` is the run date at 06:00; `valid_time_utc` is run time
@@ -81,11 +82,17 @@ Conventions:
   grid point gets a warning.
 - **Night-time solar flux is a real zero.** Missing values are never stored, and never replaced by
   zero.
+- **The visible beam flux behaves like direct-normal irradiance**, not beam on a horizontal surface:
+  at one checked point VBDSF × sin(sun elevation) + VDDSF matched HRRR's total downward shortwave
+  flux (DSWRF). So VBDSF + VDDSF is not global horizontal irradiance.
 
 ## Checking the result
 
+With the [DuckDB CLI](https://duckdb.org/docs/installation/) (`duckdb -readonly data.db`), or
+without installing anything else, from the project folder:
+
 ```bash
-duckdb -readonly data.db
+uv run python -c "import duckdb; print(duckdb.connect('data.db', read_only=True).sql('DESCRIBE hrrr_forecasts'))"
 ```
 
 ```sql
@@ -107,8 +114,10 @@ so a duplicate cannot be inserted at all.
 ## Re-runs, the cache, and failures
 
 - Before downloading, the tool asks DuckDB which (hour, variable) blocks have any requested row
-  missing, and works only on those. A re-run of a finished command makes no network requests.
-  Adding a point usually needs no download either: the messages are already cached.
+  missing, and works only on those. A re-run of a finished command with an explicit `--run-date`
+  and an intact cache makes no network requests (the default date costs one listing request; a
+  deleted cache costs one message download to read the grid). Adding a point usually needs no
+  download either: the messages are already cached.
 - Each downloaded message is saved as `.cache/hrrr/YYYYMMDD/fNN/<variable>.grib2` (written to a
   `.part` file, then renamed). A cached file is used only if it is one complete GRIB2 message and
   passes the same identity checks as a fresh download; otherwise it is downloaded again.
@@ -148,6 +157,11 @@ partial failure and exit codes, and the cache.
 | `tests/fixtures/` | Real HRRR `.idx` files and three real messages (TMP, SFCR, night-time VBDSF) |
 | `docs/research/` | What was verified about HRRR, and how |
 | `docs/adr/` | Decision records |
+| `WRITEUP.md` | Answers to the challenge's write-up questions, and how the build used AI and a rule engine |
+| `docs/ai-log.md` | Every prompt given to the AI assistant, logged automatically by a hook (verbatim) |
+| `CLAUDE.md` | Working rules given to the AI assistant (Claude Code) for this repository |
+| `.llm-rule-engine.json` | Policy for the rule engine that gated every AI change (package allowlist, mutation testing) |
+| `.claude/` | Claude Code project settings, the prompt-logging hook, and third-party skills used during the build |
 
 To add a variable: add one `Variable(...)` line to `inventory.VARIABLES` with its `.idx` label and
 its decoded identity (check both with `grib_ls` on a real message), and add its row to
@@ -161,8 +175,28 @@ uv run pytest
 
 All tests are offline. They run the real ecCodes decoder on real HRRR messages and drive `main()`
 end to end against a fake S3 bucket that counts every request, with real DuckDB files. Mutation
-testing (`mutmut run --paths-to-mutate src/hrrr_ingest/<file>.py`) checks that the tests catch
-injected defects.
+testing checks that the tests catch injected defects; run it from the project folder:
+
+```bash
+uv run mutmut run --CI --paths-to-mutate src/hrrr_ingest/<file>.py
+```
+
+Test names and comments refer to these acceptance tests (T1-T11 offline, T12 manual):
+
+| | What it proves |
+| --- | --- |
+| T1 | Invalid input exits 2 with no request and no `data.db` change |
+| T2 | The table's columns and types match the spec; times are UTC under any local time zone |
+| T3 | `.idx` byte ranges are right, and a missing or duplicate label is an error |
+| T4 | HTTP rules: 206 + exact Content-Range + length, 404 = not published, bounded retries |
+| T5 | Real messages decode as their variable; wrong field, grid or missing value is rejected |
+| T6 | Nearest grid point matches ecCodes and a haversine reference |
+| T7 | An identical re-run makes 0 requests and changes nothing |
+| T8 | Missing rows are found by exact key, not by count |
+| T9 | Smaller or bigger re-runs fetch exactly what is new |
+| T10 | A failed variable or insert loses only its own block or hour; a re-run fetches only that |
+| T11 | Bad cache files are replaced; default-date discovery, paging and failures |
+| T12 | Manual live check: the spec example twice, values compared with `grib_ls` |
 
 ## Docker
 

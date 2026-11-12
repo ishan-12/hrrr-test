@@ -1,5 +1,8 @@
 # Write-up
 
+> Draft. Q1 and Q2 are for the owner to write. Q3, Q4 and the last section were drafted by Claude
+> from the build's measurements and records, for the owner to review and rewrite in their own words.
+
 ## Q1. Time spent and difficulties
 
 > **[OWNER]** To be written by the owner from `docs/worklog.md`. The notes below are facts from the
@@ -25,10 +28,14 @@ Difficulties met during the build (from the session record and git history):
 > **[OWNER]** To be written by the owner, with real prompts from `docs/ai-log.md` and the work log.
 > Facts for this section:
 
-- **All code in this repository was written by Claude Code (Claude Opus 5.5)**, as every commit's
-  `Co-Authored-By` trailer shows. That includes the parts the plan originally reserved for the
+- **All of the application code, tests, fixtures and docs in this repository were written by
+  Claude Code (Claude Opus 5.5)**, in the commits from `7aea802` onwards, each of which carries a
+  `Co-Authored-By: Claude` trailer. That includes the parts the plan originally reserved for the
   owner to hand-write (the variable registry, the argparse signature, the table DDL and the
   missing-key SQL): the owner delegated those, and they are in their own commits.
+- The first commit, `2960d6c` "Plan and tooling", predates the build session and has no trailer.
+  It holds the project's tooling: `CLAUDE.md`, the rule-engine policy, the prompt-logging hook and
+  the vendored skills. **[OWNER]** Say who wrote which of these, and how.
 - The plan (private working notes, not part of the submission) came from two AI reviews: one by three reviewer
   agents, one by GPT-6 Astra with Claude Opus. The owner settled the five open decisions (D1-D5).
   ADR 0001 records them; its text was drafted by Claude and awaits the owner's wording.
@@ -107,9 +114,64 @@ changed several times. The tool already reports unpublished hours and missing va
 1 without failing the rest. A backfill would record those gaps as expected, per period, instead of
 retrying them forever.
 
-## How the rule engine shaped this build
+## How the rule engine shaped this build (drafted by Claude)
 
-> Filled in from the engine's ledger at the end of the session. The engine's own report is kept with
-> the private working notes, and a copy is committed only if it passes the repository's leak scan.
+The engine's own report is kept with the private working notes. A copy is committed only if it
+passes the repository's leak scan.
 
-<!-- completed below at the end of the session -->
+`llm-rule-engine` sits in Claude Code's hooks. It blocks every mutating action (file edit, shell
+command that writes, script run) until Claude files a **preflight**: a verdict and a specific note
+on each of its rules (understood patterns, architecture, simpler alternatives, less code, package
+security, vulnerable dependencies, slowdown, real tests plus mutation testing, blast radius, no
+shortcuts). It also refuses to let the turn end until a **postflight** cites machine-recorded
+evidence: a passing test run after the last edit, and a mutation run on every changed source file
+with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
+
+**Gated turns.** The whole build ran as one gated turn. The preflight was accepted on the first
+submission, at full scope. The postflight is recorded below.
+
+**Every time it blocked something** (all before the preflight, none twice):
+
+1. Writing the plan, converted to text, into a scratch file: denied ("gate closed: output
+   redirection"). Claude read the HTML directly instead.
+2. Running a read-only `python3 -c` to convert the same file: denied ("interpreter execution").
+3. A compound read-only command that also printed `.claude/settings.json`: denied as "touches
+   enforcement/config infrastructure, never allowed". The settings were not needed, so the command
+   was split and that part dropped.
+
+**Every time it changed what was done:**
+
+- **Dependency audit.** Editing `pyproject.toml` deferred the audit until a lockfile existed.
+  `uv.lock` was then scanned with osv-scanner: 0 findings, and again after each later edit.
+- **Exit-masked tests.** Four test runs piped into `grep` or `tail` were flagged as not citable,
+  because the pipe hides pytest's exit code. Each was re-run on its own.
+- **Mutation testing**, required with zero survivors, drove most of the test design:
+  - It exposed two bugs in the mutation tooling itself. mutmut 2 counts only exit code 1 as
+    "killed", so mutants that crash at import (exit 4) were reported as survivors. Its timeout
+    also could not stop pytest started through `uv run` or `sh`, which left one run hung for
+    17 minutes. The runner in `pyproject.toml` now calls pytest directly and maps any failure
+    to exit 1.
+  - Real test gaps it found, now covered by tests:
+    - the registry could be changed at run time (it is now frozen);
+    - a message assertion matched a substring, so a corrupted message still passed;
+    - the 3 km distance warning was not tested at its boundary;
+    - a cache-scan `continue` was not tested where `break` would differ.
+  - Lines where no test could tell the mutant apart, rewritten so the question disappears:
+    - retry backoff `2**attempt` (equal to `2*attempt` for attempts 1 and 2);
+    - an unused `problem = ""` initialiser;
+    - a `""` fallback;
+    - `values[mask] = np.nan`, where `None` also writes NaN;
+    - an `axis=-1` literal;
+    - a modulo-based longitude conversion;
+    - a `found = None` placeholder.
+
+  Final result: 0 surviving mutants in all six modules. One infinite-loop mutant (walking the
+  default date forwards) is caught by mutmut's timeout.
+- **Survivors approved by the owner:** none. None had to be brought to the owner, because every
+  survivor was either killed by a better test or removed by rewriting the line.
+
+The engine also records each mutmut run as evidence when it starts. That includes one `source.py`
+run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore not cited.
+
+<!-- postflight and report results: see below -->
+

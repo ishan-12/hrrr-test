@@ -16,7 +16,7 @@ import duckdb
 from hrrr_ingest import grib, inventory, source, store
 
 FAR_KM = 3.0  # inside HRRR's CONUS coverage every point is within about 2.1 km of a grid point
-BLOCK_ERRORS = (source.FetchError, grib.BadMessage, ValueError, IndexError)
+BLOCK_ERRORS = (source.FetchError, grib.BadMessage, inventory.IdxError)  # one (hour, variable) fails
 
 
 def say(message: str) -> None:
@@ -48,8 +48,8 @@ class Run:
         return self.cache_dir / f"{self.run_date:%Y%m%d}" / f"f{hour:02d}" / f"{variable.name}.grib2"
 
     def fetch(self, url: str, start=None, end=None) -> bytes:
+        self.requests += 1  # counted before the call, so failed requests count too
         data = self.get(url, start, end)
-        self.requests += 1
         self.bytes += len(data)
         return data
 
@@ -61,40 +61,49 @@ class Run:
         return field
 
     def cached(self, hour: int, variable, grid_md5=None):
-        """(bytes, field) from the cache, or None if there is no valid cached copy."""
+        """(bytes, field) from the cache, or None if nothing is cached. Raises BadMessage for a bad copy."""
         data = source.read_cached(self.path(hour, variable))
-        if data is None:
-            return None
-        try:
-            return data, self.checked(data, hour, variable, grid_md5)
-        except grib.BadMessage as e:
-            say(f"f{hour:02d} {variable.name}: cached copy rejected ({e}); downloading again")
-            return None
+        return None if data is None else (data, self.checked(data, hour, variable, grid_md5))
 
     def download(self, hour: int, variable, grid_md5=None):
         url = inventory.http_url(self.run_date, hour)
         if hour not in self.idx:
-            self.idx[hour] = self.fetch(url + ".idx").decode()
+            self.idx[hour] = self.fetch(url + ".idx").decode("ascii", "replace")
         start, end = inventory.byte_range(self.idx[hour], variable)
         data = self.fetch(url, start, end)
         field = self.checked(data, hour, variable, grid_md5)
-        source.write_atomic(self.path(hour, variable), data)
+        try:
+            source.write_atomic(self.path(hour, variable), data)
+        except OSError as e:  # a full or read-only disk costs the cache, not the data
+            say(f"f{hour:02d} {variable.name}: could not cache the message ({e.strerror}); using it anyway")
         return data, field
 
-    def message(self, hour: int, variable, grid_md5=None):
-        return self.cached(hour, variable, grid_md5) or self.download(hour, variable, grid_md5)
+    def message(self, hour: int, variable, grid_md5):
+        try:
+            found = self.cached(hour, variable, grid_md5)
+            if found:
+                return found
+        except grib.BadMessage as e:
+            say(f"f{hour:02d} {variable.name}: cached copy rejected ({e}); downloading again")
+        return self.download(hour, variable, grid_md5)
 
     def grid_message(self, hours, variables):
         """Any valid cached message of this run, else the first requested one that downloads."""
         for hour in range(inventory.LAST_HOUR + 1):
             for variable in inventory.VARIABLES.values():
-                found = self.cached(hour, variable)
+                try:
+                    found = self.cached(hour, variable)
+                except grib.BadMessage:
+                    continue  # reported later, if and when its own block is needed
                 if found:
                     return found
-        say(f"no cached message for {self.run_date}; downloading one to read the grid")
+        say(f"no usable cached message for {self.run_date}; downloading one to read the grid")
         for variable in variables:
             try:
                 return self.download(hours[0], variable)
+            except source.NotPublished as e:
+                say(f"f{hours[0]:02d}: {e}")
+                return None
             except BLOCK_ERRORS as e:
                 say(f"f{hours[0]:02d} {variable.name}: {e}")
         return None

@@ -46,7 +46,7 @@ def _points(path: str) -> list[tuple[float, float]]:
 
 def _run_date(text: str) -> date:
     try:
-        run_date = date.fromisoformat(text)
+        run_date = datetime.strptime(text, "%Y-%m-%d").date()
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD, got {text!r}")
     if run_date > utc_today():

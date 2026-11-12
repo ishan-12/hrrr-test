@@ -113,7 +113,7 @@ def is_complete_grib2(data: bytes) -> bool:
 def read_cached(path: Path) -> bytes | None:
     try:  # pragma: no mutate
         return path.read_bytes()  # pragma: no mutate
-    except FileNotFoundError:  # pragma: no mutate
+    except OSError:  # missing or unreadable: treated as not cached  # pragma: no mutate
         return None  # pragma: no mutate
 
 

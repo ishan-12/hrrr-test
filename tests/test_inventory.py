@@ -72,7 +72,7 @@ def test_byte_ranges_end_one_byte_before_the_next_message_or_at_end_of_file():
     [(IDX, 0), (IDX + "4:400:d=2025042406:PRES:surface:anl:\n" * 2, 2)],
 )
 def test_missing_or_duplicate_label_is_an_error(idx, count):
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(inventory.IdxError) as exc:
         inventory.byte_range(idx, VARIABLES["surface_pressure"])
     assert str(exc.value) == f"'PRES:surface' appears {count} times in the .idx file"
 
@@ -110,3 +110,10 @@ def test_a_run_is_complete_only_with_all_49_grib_and_idx_files():
     assert not inventory.is_complete(keys - {inventory.file_key(d, 0) + ".idx"}, d)
     assert not inventory.is_complete((keys | {inventory.file_key(d, 49)}) - {inventory.file_key(d, 48) + ".idx"}, d)
     assert inventory.FIRST_COMPLETE_RUN == date(2020, 12, 3)
+
+
+@pytest.mark.parametrize("idx", ["garbage\n", "1:0:d=2025042406:PRES:surface:anl:\n2:x:d=2025042406:TMP:2 m above ground:anl:\n"])
+def test_a_malformed_idx_file_is_an_idx_error(idx):
+    with pytest.raises(inventory.IdxError) as exc:
+        inventory.byte_range(idx, VARIABLES["surface_pressure"])
+    assert str(exc.value).startswith("malformed .idx file: ")

@@ -61,15 +61,22 @@ def is_complete(keys: set[str], run_date: date) -> bool:
     return all(f in keys and f + ".idx" in keys for f in files)
 
 
+class IdxError(Exception):
+    """The .idx file does not locate exactly one message for the variable."""
+
+
 def byte_range(idx_text: str, variable: Variable) -> tuple[int, int | None]:
     """First and last byte of the variable's message; last is None for the file's final message.
 
-    Raises ValueError unless the label appears exactly once.
+    Raises IdxError unless the label appears exactly once in a well-formed .idx file.
     """
-    entries = [line.split(":") for line in idx_text.splitlines()]
-    matches = [i for i, e in enumerate(entries) if f"{e[3]}:{e[4]}" == variable.idx_label]
-    if len(matches) != 1:
-        raise ValueError(f"{variable.idx_label!r} appears {len(matches)} times in the .idx file")
-    i = matches[0]
-    end = int(entries[i + 1][1]) - 1 if i + 1 < len(entries) else None
-    return int(entries[i][1]), end
+    try:
+        entries = [line.split(":") for line in idx_text.splitlines()]
+        matches = [i for i, e in enumerate(entries) if f"{e[3]}:{e[4]}" == variable.idx_label]
+        if len(matches) != 1:
+            raise IdxError(f"{variable.idx_label!r} appears {len(matches)} times in the .idx file")
+        i = matches[0]
+        end = int(entries[i + 1][1]) - 1 if i + 1 < len(entries) else None
+        return int(entries[i][1]), end
+    except (IndexError, ValueError) as e:
+        raise IdxError(f"malformed .idx file: {e}")
