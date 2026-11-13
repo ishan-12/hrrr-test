@@ -41,8 +41,10 @@ no listing call.
 **D4. Partial failure: one transaction per forecast hour.**
 The variable blocks that decode and pass every check for an hour are committed together. A block
 that fails (not published, HTTP error, identity mismatch, missing value) is reported and skipped.
-An insert error rolls back that hour only, then stops the run, as does a request that fails all
-three attempts: later hours would fail the same way, and stored hours are kept. Exit codes:
+A 403 or 404 on an hour's `.idx` loses that whole hour (except messages already cached), not one
+block. After a request fails all three attempts, the run makes no further requests but still uses
+cached messages. An insert error rolls back that hour only, then stops the run; stored hours are
+kept. Exit codes:
 - 0 when every requested key is in the table at the end of the run;
 - 1 when anything is still missing or failed;
 - 2 for invalid input, detected before any network call or database change.

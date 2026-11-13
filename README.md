@@ -130,10 +130,12 @@ so a duplicate cannot be inserted at all.
   A variable that fails (not published, HTTP error, wrong field, missing value) is reported and
   skipped; the other variables of that hour are still stored. Run the same command again to retry
   only what is missing.
-- Two failures stop the run instead: a request that fails all three attempts (the bucket is down or
-  unreachable) and a failed insert (a full disk, a broken database). Later hours would only fail the
-  same way. Rows already stored stay, and so do the rows the current hour had gathered before an
-  outage. A re-run picks up from there.
+- A 403 or 404 on an hour's `.idx` loses that whole hour, not one block, because none of its
+  messages can be located. Only those of its messages already in the cache are still stored.
+- If a request fails all three attempts (the bucket is down or unreachable), the run makes no
+  further requests, but still stores every block whose message is already cached. A failed insert
+  (a full disk, a broken database) stops the run, because later inserts would fail the same way.
+  Either way the rows already stored stay, and a re-run picks up from there.
 
 Exit codes:
 
@@ -170,9 +172,17 @@ partial failure and exit codes, and the cache.
 | `.llm-rule-engine.json` | Policy for the rule engine that gated every AI change (package allowlist, mutation testing) |
 | `.claude/` | Claude Code project settings, the prompt-logging hook, and third-party skills used during the build |
 
-To add a variable: add one `Variable(...)` line to `inventory.VARIABLES` with its `.idx` label and
-its decoded identity (check both with `grib_ls` on a real message), and add its row to
-`tests/fixtures/identities.txt`.
+To add an instantaneous variable (GRIB2 product template 0):
+- add one `Variable(...)` line to `inventory.VARIABLES` with its `.idx` label and its decoded
+  identity (check both with `grib_ls` on a real message);
+- add its row to `tests/fixtures/identities.txt`;
+- add its name to `SPEC_NAMES` in `tests/test_inventory.py`;
+- update the "all 11" in the `--variables` help text in `cli.py`.
+
+An accumulated or averaged field (template 8, such as APCP precipitation) needs code changes, not
+just a registry line. The identity check expects template 0 and a single forecast time. And from
+f02 on, `APCP:surface` appears twice in each `.idx` file (`0-2 hour acc fcst` and
+`1-2 hour acc fcst` at f02), so matching on `VAR:level` alone finds two messages.
 
 ## Tests
 
@@ -205,9 +215,12 @@ Test names and comments refer to these acceptance tests (T1-T11 offline, T12 man
 | T7 | An identical re-run makes 0 requests and changes nothing |
 | T8 | Missing rows are found by exact key, not by count |
 | T9 | Smaller or bigger re-runs fetch exactly what is new |
-| T10 | A failed variable loses only its block; an outage or insert error stops the run and keeps what is stored; a re-run fetches only what is missing |
+| T10 | A failed variable loses only its block, a 403/404 `.idx` its hour; an outage ends requests but cached blocks are still stored; an insert error stops the run; a re-run fetches only what is missing |
 | T11 | Bad cache files are replaced; default-date discovery, paging and failures |
 | T12 | Manual live check: the spec example twice, values compared with `grib_ls` |
+
+T12 was run on 2026-11-12. The spec example stored 36 rows from 6 requests, and the stored values
+matched `grib_ls`. The second run made 0 requests and added 0 rows.
 
 ## Docker
 
@@ -232,7 +245,7 @@ laptop connection:
 | HTTP requests | 576 (48 `.idx` + 528 messages), plus 1 listing for the default date | 0, plus 1 listing |
 | Bytes downloaded | 789 MB | 0 |
 | Wall time | 6 min | 1.4 s |
-| Cache size | 753 MB | unchanged |
+| Cache size | 789 MB (752 MiB) | unchanged |
 | Peak memory | about 290 MB | |
 
 The request count in the tool's summary line covers `.idx` files and messages; the one or two

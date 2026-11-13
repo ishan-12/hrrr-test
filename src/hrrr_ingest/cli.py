@@ -12,9 +12,9 @@ from pathlib import Path
 import duckdb
 
 from hrrr_ingest import ingest, source, store
-from hrrr_ingest.inventory import VARIABLES
+from hrrr_ingest.inventory import LAST_HOUR, VARIABLES
 
-MAX_HOURS = 48
+MAX_HOURS = LAST_HOUR  # --num-hours N ingests f00 to f(N-1), so at most f47 (ADR D1)
 DB_PATH = "data.db"
 CACHE_DIR = Path(".cache/hrrr")
 
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
                 con, run_date, range(args.num_hours), args.variables, args.points, CACHE_DIR, source.fetch
             )
     except (duckdb.Error, OSError) as e:  # locked, unusable or unwritable data.db, a full disk, ...
-        print(f"hrrr-ingest: {(str(e).strip() or type(e).__name__).splitlines()[0]}", file=sys.stderr)
+        print(f"hrrr-ingest: {ingest.first_line(e)}", file=sys.stderr)
         return 1
     return 0 if complete else 1
 

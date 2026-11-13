@@ -123,7 +123,8 @@ completed work a failure loses.
 
 What holds:
 - A failed variable loses only its own (hour, variable) block.
-- A missing or refused `.idx` loses only its hour, and is fetched once.
+- A missing or refused `.idx` (404, 403) loses that whole hour except its cached messages. It is
+  fetched once and reported once.
 - A bad cached copy is reported once and downloaded again.
 - Rows are committed one hour at a time, so a failure never loses a stored hour.
 - Every failure exits 1, and a re-run fetches only what is missing.
@@ -134,16 +135,28 @@ Fixed in turn 6 (medium):
   exception's type instead.
 - **A sustained outage dragged on hour by hour.** Each later hour spent a full retry cycle on its
   `.idx`: 3 attempts and 15 s of backoff per hour. That is about 12 minutes for a 48-hour run when
-  connections fail fast, and up to about 2.6 hours when each attempt hits the 60 s timeout. A
-  request that fails all three attempts now stops the run. The rows the current hour had already
-  gathered are stored first.
+  connections fail fast, and up to about 2.6 hours when each attempt hits the 60 s timeout. Now,
+  after a request fails all three attempts, the run makes no further requests (refined in turn 7,
+  below).
 - **A failed insert did not stop the run.** After a full disk or an I/O error, every later hour
   still downloaded its messages and then failed to insert. With the cache on the same full disk, a
   default run would download about 0.8 GB and keep none of it. A failed insert now stops the run.
 
+Fixed in turn 7, from an outside pre-submission review:
+- **Lost work was skipped after a lost hour or an outage.** After a 403/404 `.idx`, or once the
+  bucket stayed down, the main loop broke out and skipped blocks whose messages were already
+  cached. That matters for a newly added point, when every block is missing but cached. Each
+  failure is now remembered in `Run`: a lost hour per hour, and an unreachable bucket for the whole
+  run. Later blocks are still read from the cache, with no further requests.
+- **A lost first hour emptied the grid bootstrap.** With an empty cache, a 403/404 on the first
+  requested hour's `.idx` stored nothing. The bootstrap now tries the next requested hour; an
+  unreachable bucket still stops it at once.
+- **The "insert failed" line printed a multi-line DuckDB error.** It now prints the first line only.
+
 Known limitations (low, not fixed):
 - **Cache write failures are not remembered.** With an unwritable cache, each block prints its own
-  "could not cache" line: up to 528 for a default run. Each failure costs only a local system call.
+  "could not cache" line: up to 529 for a default run (528 blocks plus the grid bootstrap's
+  download). Each failure costs only a local system call.
 - **A failed cache write can leave a `.part` file.** It is ignored, and overwritten by the next
   write of that message, but never deleted.
 - **A server that ignores the `Range` header** and answers 200 makes the tool read the whole file
@@ -159,8 +172,18 @@ Known limitations (low, not fixed):
   error instead of the summary line. Stored hours are kept.
 - **Ctrl-C prints a Python traceback.** Stored hours are kept. The current hour's rows are lost, but
   its messages are already cached.
-- **A closed or broken stderr makes the tool crash.** Printing a warning raises, and the CLI's own
-  error line fails the same way, so the tool ends with a traceback.
+- **A broken stderr pipe crashes the tool.** If stderr is a pipe whose reader has gone, printing a
+  warning raises. The tool then exits with code 120 (Python's code for a failed flush at exit),
+  not 0 or 1. A closed stderr does not crash it: warnings go to stdout instead. Both were checked
+  on 2026-11-12 with a stand-in for the ingest step.
+- **One object that keeps failing blocks later hours on every re-run.** If one message or `.idx`
+  fails all three attempts every time, each run stops requesting at that point, and later hours
+  that are not cached are never fetched until that object recovers.
+- **A flaky link has no overall retry budget.** Retries are counted per request. If every request
+  fails twice and succeeds on the third attempt, a default run still completes, after about
+  2.4 hours of backoff (576 requests × 15 s).
+- **A recurring insert error stops every run at the same hour.** If one hour's insert always fails,
+  every run stops there, and later hours are never stored.
 - **A corrupted cache file is not always caught.** GRIB2 has no checksum, so a cached file damaged
   inside its data section but with intact framing, identity and grid hash would be decoded as-is.
   This is the cache checksum manifest listed under Q3.

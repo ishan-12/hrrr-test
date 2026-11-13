@@ -45,6 +45,11 @@ Observations that shape the code:
 - `resolutionAndComponentFlags` is 8 on all messages: winds are **grid-relative**, not earth-relative.
 - At f00 (06:00 UTC, night over CONUS) VBDSF and VDDSF are 188-byte `grid_simple` messages: a
   constant field of zeros. That is a real zero, not missing data. `bitmapPresent` is 0 on all 11.
+- Not supported, checked 2026-11-12 for the README's "add a variable" note: accumulated fields
+  differ. The 2025-04-24 06z f02 `.idx` lists `APCP:surface` twice (`0-2 hour acc fcst`, message
+  84, and `1-2 hour acc fcst`, message 90). `grib_get` on a byte range from message 84 gives
+  `tp`, `productDefinitionTemplateNumber` 8, `typeOfStatisticalProcessing` 1 (accumulation),
+  `lengthOfTimeRange` 2.
 
 Checked during review (2026-11-12 06z, f11, at 33.7845,-86.0524, from a byte-ranged
 `DSWRF:surface` message and the stored values): DSWRF = 642.1, VBDSF = 905, VDDSF = 93.2 W m-2.

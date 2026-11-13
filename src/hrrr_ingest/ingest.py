@@ -18,14 +18,20 @@ from hrrr_ingest import grib, inventory, source, store
 FAR_KM = 3.0  # inside HRRR's CONUS coverage every point is within about 2.1 km of a grid point
 BLOCK_ERRORS = (source.FetchError, grib.BadMessage, inventory.IdxError)  # one (hour, variable) fails
 STOP = "stopping the run (a rerun resumes from here)"
+OFFLINE = "no further requests this run (a rerun resumes from here)"
 
 
 class HourUnavailable(Exception):
-    """The hour's .idx could not be fetched, so none of its variables can be: give up on the hour once."""
+    """The hour's .idx could not be fetched (404, 403), so none of its uncached messages can be."""
 
 
 def say(message: str) -> None:
     print(message, file=sys.stderr)
+
+
+def first_line(error: Exception) -> str:
+    """The error's first line, or its type name if it has no message."""
+    return (str(error).strip() or type(error).__name__).splitlines()[0]
 
 
 def latest_complete_date(today: date, get) -> date:
@@ -45,7 +51,8 @@ class Run:
         self.run_date = run_date
         self.cache_dir = cache_dir
         self.get = get
-        self.idx = {}  # hour -> .idx text, fetched at most once per hour
+        self.idx = {}  # hour -> .idx text, or the HourUnavailable it ended in: fetched at most once
+        self.down = None  # the first source.Unreachable: after it, no further requests this run
         self.requests = 0
         self.bytes = 0
 
@@ -53,8 +60,15 @@ class Run:
         return self.cache_dir / f"{self.run_date:%Y%m%d}" / f"f{hour:02d}" / f"{variable.name}.grib2"
 
     def fetch(self, url: str, start=None, end=None) -> bytes:
+        if self.down is not None:
+            raise self.down
         self.requests += 1  # counted before the call, so failed requests count too
-        data = self.get(url, start, end)
+        try:
+            data = self.get(url, start, end)
+        except source.Unreachable as e:  # every retry failed: later requests would fail the same way
+            say(f"{e}; {OFFLINE}")
+            self.down = e
+            raise
         self.bytes += len(data)
         return data
 
@@ -75,10 +89,13 @@ class Run:
         if hour not in self.idx:
             try:
                 self.idx[hour] = self.fetch(url + ".idx").decode("ascii", "replace")
-            except source.Unreachable:
-                raise  # the bucket is down, not just this hour: the caller stops the run
-            except source.FetchError as e:  # 404, 403: the whole hour is out of reach
-                raise HourUnavailable(e)
+            except source.Unreachable:  # must stay above FetchError: the bucket is down, not just this hour
+                raise
+            except source.FetchError as e:  # 404, 403: reported once, remembered for the hour's other blocks
+                say(f"f{hour:02d}: {e}")
+                self.idx[hour] = HourUnavailable(e)
+        if isinstance(self.idx[hour], HourUnavailable):
+            raise self.idx[hour]
         start, end = inventory.byte_range(self.idx[hour], variable)
         data = self.fetch(url, start, end)
         field = self.checked(data, hour, variable, grid_md5)
@@ -108,14 +125,16 @@ class Run:
                 if found:
                     return found
         say(f"no usable cached message for {self.run_date}; downloading one to read the grid")
-        for variable in variables:
-            try:
-                return self.download(hours[0], variable)
-            except (HourUnavailable, source.Unreachable) as e:
-                say(f"f{hours[0]:02d}: {e}")
-                return None
-            except BLOCK_ERRORS as e:
-                say(f"f{hours[0]:02d} {variable.name}: {e}")
+        for hour in hours:
+            for variable in variables:
+                try:
+                    return self.download(hour, variable)
+                except source.Unreachable:  # already reported; must stay above BLOCK_ERRORS, which includes it
+                    return None
+                except HourUnavailable:  # already reported: try the next requested hour
+                    break
+                except BLOCK_ERRORS as e:
+                    say(f"f{hour:02d} {variable.name}: {e}")
         return None
 
 
@@ -149,30 +168,23 @@ def ingest(con, run_date: date, hours, variables, points, cache_dir: Path, get) 
     for valid_time, todo_variables in todo.items():
         hour = (valid_time - run_time) // timedelta(hours=1)
         source_s3 = inventory.source_s3(run_date, hour)
-        rows, stop = [], False
+        rows = []
         for variable in todo_variables:
             try:
                 _, field = run.message(hour, variable, grid_field.grid_md5)
                 values = grib.values_at(field, cells)
-            except source.Unreachable as e:  # every later request would fail the same way
-                say(f"f{hour:02d} {variable.name}: {e}; {STOP}")
-                stop = True
-                break
-            except HourUnavailable as e:
-                say(f"f{hour:02d}: {e}")
-                break
+            except (source.Unreachable, HourUnavailable):  # already reported; cached blocks are still used
+                continue  # this clause must stay above BLOCK_ERRORS, which includes source.Unreachable
             except BLOCK_ERRORS as e:
                 say(f"f{hour:02d} {variable.name}: {e}")
                 continue
             rows += [(valid_time, lat, lon, variable.name, float(v), source_s3) for (lat, lon), v in zip(coords, values)]
-        if rows:  # rows gathered before a stop are stored too
+        if rows:
             try:
                 store.insert(con, run_time, rows)
             except duckdb.Error as e:  # a full disk or a broken database: every later insert would fail too
-                say(f"f{hour:02d}: insert failed, nothing stored for this hour: {e}; {STOP}")
-                stop = True
-        if stop:
-            break
+                say(f"f{hour:02d}: insert failed, nothing stored for this hour: {first_line(e)}; {STOP}")
+                break
 
     still_missing = store.missing(con, run_time, keys)
     rows_after = con.execute("SELECT count(*) FROM hrrr_forecasts").fetchone()[0]
