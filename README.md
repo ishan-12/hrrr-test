@@ -175,9 +175,11 @@ partial failure and exit codes, and the cache.
 To add an instantaneous variable (GRIB2 product template 0):
 - add one `Variable(...)` line to `inventory.VARIABLES` with its `.idx` label and its decoded
   identity (check both with `grib_ls` on a real message);
-- add its row to `tests/fixtures/identities.txt`;
+- add its four rows to `tests/fixtures/identities.txt`, one each for f00, f01, f02 and f48
+  (`grib_get` on real messages);
 - add its name to `SPEC_NAMES` in `tests/test_inventory.py`;
-- update the "all 11" in the `--variables` help text in `cli.py`.
+- update the "all 11" in the `--variables` help text in `cli.py` and in `test_help_text`
+  (`tests/test_cli_args.py`).
 
 An accumulated or averaged field (template 8, such as APCP precipitation) needs code changes, not
 just a registry line. The identity check expects template 0 and a single forecast time. And from

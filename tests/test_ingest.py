@@ -55,6 +55,8 @@ def test_vertical_slice_one_variable_one_hour_two_points(s3):
 
 ARGS = ("--variables", TWO_VARS, "--num-hours", "2")
 THREE = ("--variables", TWO_VARS, "--num-hours", "3")
+ONE = ("--variables", "temperature_2m", "--num-hours", "1")
+CACHED_TMP = Path(".cache/hrrr/20250424/f00/temperature_2m.grib2")
 F00, F01, F02 = http_url(RUN_DATE, 0), http_url(RUN_DATE, 1), http_url(RUN_DATE, 2)
 
 
@@ -381,9 +383,6 @@ def test_the_grid_bootstrap_tries_the_next_variable(s3, capsys):
 
 # --- T11: cache and default date ------------------------------------------------------------------
 
-CACHED_TMP = Path(".cache/hrrr/20250424/f00/temperature_2m.grib2")
-ONE = ("--variables", "temperature_2m", "--num-hours", "1")
-
 
 def test_messages_are_cached_under_date_hour_and_name(s3):
     s3.add_run()
@@ -704,3 +703,17 @@ def test_an_error_with_no_message_is_named_by_its_type(s3, monkeypatch, capsys, 
     monkeypatch.setattr(store, "missing", failing_missing)
     assert ingest(*ONE) == 1
     assert capsys.readouterr().err.splitlines()[-1] == f"hrrr-ingest: {line}"
+
+
+def test_a_cached_grid_message_whose_grid_cannot_be_read_is_one_line_and_exit_1(s3, capsys):
+    s3.add_run()
+    write_points(5)
+    # Framing and identity are intact, so the cache scan accepts it; only the grid is broken.
+    broken = make_message("temperature_2m", RUN_DATE, 0, Latin1InDegrees=0.0, Latin2InDegrees=0.0)
+    CACHED_TMP.parent.mkdir(parents=True)
+    CACHED_TMP.write_bytes(broken)
+    assert ingest(*ONE) == 1
+    assert s3.calls == []
+    assert capsys.readouterr().err.splitlines() == [
+        "hrrr-ingest: ecCodes cannot read the message: Grid description is wrong or inconsistent"
+    ]

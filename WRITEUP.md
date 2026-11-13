@@ -1,6 +1,6 @@
 # Write-up
 
-> Draft. Q1 and Q2 are for the owner to write. Q3, Q4 and the last section were drafted by Claude
+> Draft. Q1 and Q2 are for the owner to write. Q3, Q4 and the last two sections were drafted by Claude
 > from the build's measurements and records, for the owner to review and rewrite in their own words.
 
 ## Q1. Time spent and difficulties
@@ -97,7 +97,7 @@ change, roughly in order of payoff:
 3. **One task per run date, many workers.** Each run date is independent, and the tool is already
    idempotent per run. Fan dates out to a queue (AWS Batch, Step Functions, Airflow), each task
    writing its own Parquet partition, so no workers share a DuckDB file.
-4. **Don't keep raw messages.** For a backfill the cache is 0.75 GB per run with nothing to reuse
+4. **Don't keep raw messages.** For a backfill the cache is about 0.8 GB per run with nothing to reuse
    it. Decode in memory and keep only the extracted values, or cache to cheap storage with a
    lifetime rule.
 5. **Nearest-point lookup for many points.** It is brute force today: about 4 ms per point
@@ -163,7 +163,7 @@ Known limitations (low, not fixed):
   (about 150 MB) into memory before the 206 check rejects it. S3 honours `Range`; a proxy might not.
 - **The 60 s timeout applies to each socket read, not to the whole request.** A connection that
   sends a byte every 59 s never times out.
-- **The default date can take about 2,000 requests to give up.** If listings succeed but come back
+- **The default date can take about 2,200 requests to give up.** If listings succeed but come back
   empty (for example, NOAA moves the data), default-date discovery lists every date back to
   2020-12-03 before exiting 1.
 - **A listing that repeats its continuation token would be paged forever.** S3 does not do this.
@@ -174,8 +174,11 @@ Known limitations (low, not fixed):
   its messages are already cached.
 - **A broken stderr pipe crashes the tool.** If stderr is a pipe whose reader has gone, printing a
   warning raises. The tool then exits with code 120 (Python's code for a failed flush at exit),
-  not 0 or 1. A closed stderr does not crash it: warnings go to stdout instead. Both were checked
-  on 2026-11-12 with a stand-in for the ingest step.
+  not 0 or 1. A closed stderr does not crash it: the tool's warnings go to stdout instead. Both
+  were checked on 2026-11-12 with a stand-in for the ingest step.
+- **A closed stderr (`2>&-`) can damage `data.db`.** ecCodes writes its own error text to file
+  descriptor 2, whatever file holds it at the time, and that can be `data.db`. To silence the
+  tool, use `2>/dev/null`, never `2>&-`.
 - **One object that keeps failing blocks later hours on every re-run.** If one message or `.idx`
   fails all three attempts every time, each run stops requesting at that point, and later hours
   that are not cached are never fetched until that object recovers.
@@ -187,8 +190,20 @@ Known limitations (low, not fixed):
 - **A corrupted cache file is not always caught.** GRIB2 has no checksum, so a cached file damaged
   inside its data section but with intact framing, identity and grid hash would be decoded as-is.
   This is the cache checksum manifest listed under Q3.
+- **The grid bootstrap trusts the first cached message's grid without checking it.** If that
+  file's grid section is corrupted, one of two things happens on every run until `.cache` is
+  deleted:
+  - later messages fail the grid check, so they are downloaded again each time and never stored;
+  - or rows are stored at the wrong coordinates.
+
+  A grid that ecCodes cannot read at all is a one-line error with exit 1 (since turn 14). A real
+  fix needs the HRRR grid hash pinned in the code.
 
 ## How the rule engine shaped this build (drafted by Claude)
+
+**Final `ruler report`** (run fresh after turn 14): exit code 1, `VERDICT: FAIL`. One turn failed
+open (turn 7), and two accepted postflights carry a RISK verdict (R9 in turn 8, R10 in turn 13).
+No postflight carries a FAIL verdict, and there were no overrides.
 
 The engine's `ruler report` summarises a whole session. It shows `VERDICT: PASS` only if no turn
 ended unreviewed ("failed open") and no accepted postflight carried a FAIL or RISK verdict. The
@@ -220,7 +235,7 @@ and a postflight.
 | 10 | The owner approved mutant 195. The docs now record it, and a comment explains the `break` | Preflight and postflight accepted first time, with 195 accepted as owner-approved. `ruler report` still exits 1, `VERDICT: FAIL`. That comes from turn 7's fail-open and turn 8's R9 risk, which stay on record |
 | 11 | A question: what does `VERDICT: FAIL` mean, and can it become PASS? | Read-only, no gate needed |
 | 12 | A question: have all the requested issues been fixed? | Read-only, no gate needed |
-| 13 | At the owner's request, the committed copy of the engine's report was removed from the repository and from its whole git history, and the file name was added to `.gitignore`. Without the engine's code, a reader cannot interpret it | Preflight accepted first time. Blast radius (R10) was marked **risk**, because rewriting history cannot be undone in place; a full backup of the old history was taken first. The postflight was rejected once (notes not tied to a changed file, a missing perf entry), then accepted |
+| 13 | At the owner's request, the committed copy of the engine's report was removed from the repository and from its whole git history, and the file name was added to `.gitignore`. Its format is specific to the engine, which is not part of this submission | Preflight accepted first time. Blast radius (R10) was marked **risk**, because rewriting history cannot be undone in place; a full backup of the old history was taken first. The postflight was rejected once (notes not tied to a changed file, a missing perf entry), then accepted |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
@@ -230,7 +245,7 @@ Turn 5 fixed four issues, test-first:
 - `read_cached` and `write_atomic` are now mutation-tested; only the raw HTTP call is excluded.
 - The variable registry is now a read-only mapping.
 
-**Every time it blocked something** (all before the preflight, none twice):
+**Actions blocked before turn 1's preflight** (none twice):
 
 1. Writing the plan, converted to text, into a scratch file: denied ("gate closed: output
    redirection"). Claude read the HTML directly instead.
@@ -289,7 +304,7 @@ Turn 5 fixed four issues, test-first:
   or removed by rewriting the line.
 
 The engine also records each mutmut run as evidence when it starts. That includes one `source.py`
-run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore not cited.
+run that Claude stopped once it hung, which is therefore not cited.
 
 **The postflight (turn 1).**
 
