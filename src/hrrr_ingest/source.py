@@ -28,6 +28,10 @@ class NotPublished(FetchError):
     """HTTP 404: the object does not exist (yet)."""
 
 
+class Unreachable(FetchError):
+    """Every attempt failed with a timeout, 429 or 5xx: the bucket is down or unreachable for now."""
+
+
 def _http_get(url: str, headers: dict) -> tuple:  # pragma: no mutate
     request = urllib.request.Request(url, headers=headers)  # pragma: no mutate
     try:  # pragma: no mutate
@@ -71,7 +75,7 @@ def fetch(url: str, start: int | None = None, end: int | None = None, sleep=time
         elif status != 200:
             raise FetchError(f"HTTP {status} for {url}")
         return body
-    raise FetchError(f"{problem} for {url}, after {ATTEMPTS} attempts")
+    raise Unreachable(f"{problem} for {url}, after {ATTEMPTS} attempts")
 
 
 def parse_listing(xml: bytes) -> tuple[list[str], str | None]:

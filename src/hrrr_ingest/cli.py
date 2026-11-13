@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
                 con, run_date, range(args.num_hours), args.variables, args.points, CACHE_DIR, source.fetch
             )
     except (duckdb.Error, OSError) as e:  # locked, unusable or unwritable data.db, a full disk, ...
-        print(f"hrrr-ingest: {str(e).splitlines()[0]}", file=sys.stderr)
+        print(f"hrrr-ingest: {(str(e).strip() or type(e).__name__).splitlines()[0]}", file=sys.stderr)
         return 1
     return 0 if complete else 1
 

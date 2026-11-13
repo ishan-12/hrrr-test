@@ -17,6 +17,7 @@ from hrrr_ingest import grib, inventory, source, store
 
 FAR_KM = 3.0  # inside HRRR's CONUS coverage every point is within about 2.1 km of a grid point
 BLOCK_ERRORS = (source.FetchError, grib.BadMessage, inventory.IdxError)  # one (hour, variable) fails
+STOP = "stopping the run (a rerun resumes from here)"
 
 
 class HourUnavailable(Exception):
@@ -74,7 +75,9 @@ class Run:
         if hour not in self.idx:
             try:
                 self.idx[hour] = self.fetch(url + ".idx").decode("ascii", "replace")
-            except source.FetchError as e:  # 404, 403, outage: the whole hour is out of reach
+            except source.Unreachable:
+                raise  # the bucket is down, not just this hour: the caller stops the run
+            except source.FetchError as e:  # 404, 403: the whole hour is out of reach
                 raise HourUnavailable(e)
         start, end = inventory.byte_range(self.idx[hour], variable)
         data = self.fetch(url, start, end)
@@ -108,7 +111,7 @@ class Run:
         for variable in variables:
             try:
                 return self.download(hours[0], variable)
-            except HourUnavailable as e:
+            except (HourUnavailable, source.Unreachable) as e:
                 say(f"f{hours[0]:02d}: {e}")
                 return None
             except BLOCK_ERRORS as e:
@@ -146,11 +149,15 @@ def ingest(con, run_date: date, hours, variables, points, cache_dir: Path, get) 
     for valid_time, todo_variables in todo.items():
         hour = (valid_time - run_time) // timedelta(hours=1)
         source_s3 = inventory.source_s3(run_date, hour)
-        rows = []
+        rows, stop = [], False
         for variable in todo_variables:
             try:
                 _, field = run.message(hour, variable, grid_field.grid_md5)
                 values = grib.values_at(field, cells)
+            except source.Unreachable as e:  # every later request would fail the same way
+                say(f"f{hour:02d} {variable.name}: {e}; {STOP}")
+                stop = True
+                break
             except HourUnavailable as e:
                 say(f"f{hour:02d}: {e}")
                 break
@@ -158,11 +165,14 @@ def ingest(con, run_date: date, hours, variables, points, cache_dir: Path, get) 
                 say(f"f{hour:02d} {variable.name}: {e}")
                 continue
             rows += [(valid_time, lat, lon, variable.name, float(v), source_s3) for (lat, lon), v in zip(coords, values)]
-        if rows:
+        if rows:  # rows gathered before a stop are stored too
             try:
                 store.insert(con, run_time, rows)
-            except duckdb.Error as e:
-                say(f"f{hour:02d}: insert failed, nothing stored for this hour: {e}")
+            except duckdb.Error as e:  # a full disk or a broken database: every later insert would fail too
+                say(f"f{hour:02d}: insert failed, nothing stored for this hour: {e}; {STOP}")
+                stop = True
+        if stop:
+            break
 
     still_missing = store.missing(con, run_time, keys)
     rows_after = con.execute("SELECT count(*) FROM hrrr_forecasts").fetchone()[0]

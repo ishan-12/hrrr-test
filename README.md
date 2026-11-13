@@ -130,6 +130,10 @@ so a duplicate cannot be inserted at all.
   A variable that fails (not published, HTTP error, wrong field, missing value) is reported and
   skipped; the other variables of that hour are still stored. Run the same command again to retry
   only what is missing.
+- Two failures stop the run instead: a request that fails all three attempts (the bucket is down or
+  unreachable) and a failed insert (a full disk, a broken database). Later hours would only fail the
+  same way. Rows already stored stay, and so do the rows the current hour had gathered before an
+  outage. A re-run picks up from there.
 
 Exit codes:
 
@@ -201,7 +205,7 @@ Test names and comments refer to these acceptance tests (T1-T11 offline, T12 man
 | T7 | An identical re-run makes 0 requests and changes nothing |
 | T8 | Missing rows are found by exact key, not by count |
 | T9 | Smaller or bigger re-runs fetch exactly what is new |
-| T10 | A failed variable or insert loses only its own block or hour; a re-run fetches only that |
+| T10 | A failed variable loses only its block; an outage or insert error stops the run and keeps what is stored; a re-run fetches only what is missing |
 | T11 | Bad cache files are replaced; default-date discovery, paging and failures |
 | T12 | Manual live check: the spec example twice, values compared with `grib_ls` |
 

@@ -54,7 +54,8 @@ def test_vertical_slice_one_variable_one_hour_two_points(s3):
 
 
 ARGS = ("--variables", TWO_VARS, "--num-hours", "2")
-F00, F01 = http_url(RUN_DATE, 0), http_url(RUN_DATE, 1)
+THREE = ("--variables", TWO_VARS, "--num-hours", "3")
+F00, F01, F02 = http_url(RUN_DATE, 0), http_url(RUN_DATE, 1), http_url(RUN_DATE, 2)
 
 
 def message_range(s3, hour, name):
@@ -267,7 +268,7 @@ def test_one_bad_variable_keeps_the_rest_of_its_hour_and_a_rerun_fetches_only_it
     assert table() == sorted_expected([5])
 
 
-def test_insert_error_loses_only_that_hour_and_the_rerun_uses_the_cache(s3, monkeypatch, capsys):
+def test_an_insert_error_stops_the_run_and_the_rerun_uses_the_cache(s3, monkeypatch, capsys):
     s3.add_run()
     write_points(5)
     real_insert = store.insert
@@ -278,14 +279,16 @@ def test_insert_error_loses_only_that_hour_and_the_rerun_uses_the_cache(s3, monk
         real_insert(con, run_time, rows)
 
     monkeypatch.setattr(store, "insert", insert_failing_at_0700)
-    assert ingest(*ARGS) == 1
+    assert ingest(*THREE) == 1
     assert table() == [r for r in sorted_expected([5]) if r[0] == RUN]
-    assert any(line.startswith("f01: insert failed, nothing stored for this hour: ") for line in capsys.readouterr().err.splitlines())
+    assert not any(call[0].startswith(F02) for call in s3.calls)  # a full disk would fail f02 too
+    assert "f01: insert failed, nothing stored for this hour: Invalid Input Error: disk full; " \
+        "stopping the run (a rerun resumes from here)" in capsys.readouterr().err.splitlines()
     monkeypatch.setattr(store, "insert", real_insert)
     s3.calls.clear()
-    assert ingest(*ARGS) == 0
-    assert s3.calls == []
-    assert table() == sorted_expected([5])
+    assert ingest(*THREE) == 0
+    assert s3.calls and all(call[0].startswith(F02) for call in s3.calls)  # f01 comes from the cache
+    assert table() == sorted_expected([5], hours=(0, 1, 2))
 
 
 def test_an_unpublished_hour_is_reported_once_and_exits_1(s3, capsys):
@@ -527,27 +530,58 @@ def test_an_explicit_date_makes_no_listing_call(s3):
 
 def test_a_failing_idx_is_fetched_once_and_fails_its_hour_once(s3, capsys):
     s3.add_run()
-    outage = source.FetchError(f"HTTP 503 for {F01}.idx, after 3 attempts")
-    s3.failures[F01 + ".idx"] = outage
+    denied = source.FetchError(f"HTTP 403 for {F01}.idx")
+    s3.failures[F01 + ".idx"] = denied
     write_points(5)
-    assert ingest(*ARGS) == 1
+    assert ingest(*THREE) == 1
     assert s3.calls.count((F01 + ".idx", None, None)) == 1
-    assert table() == [r for r in sorted_expected([5]) if r[0] == RUN]
+    assert table() == [r for r in sorted_expected([5], hours=(0, 1, 2)) if r[0] != datetime(2025, 4, 24, 7)]
     hour_lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("f01")]
-    assert hour_lines == [f"f01: {outage}"]
+    assert hour_lines == [f"f01: {denied}"]
 
 
-def test_a_failing_idx_stops_the_grid_bootstrap_at_once(s3, capsys):
+@pytest.mark.parametrize("target", ["denied idx", "unreachable idx", "unreachable message"])
+def test_a_failing_grid_bootstrap_stops_at_once(s3, capsys, target):
     s3.add_run()
-    s3.failures[F00 + ".idx"] = source.FetchError(f"TimeoutError: timed out for {F00}.idx, after 3 attempts")
     write_points(5)
+    url = message_range(s3, 0, "temperature_2m") if target == "unreachable message" else F00 + ".idx"
+    error = (source.FetchError if target == "denied idx" else source.Unreachable)(f"HTTP 503 for {F00}, after 3 attempts")
+    s3.failures[url] = error
     assert ingest(*ARGS) == 1
-    assert s3.calls == [(F00 + ".idx", None, None)]
+    assert s3.calls[-1] == (url if isinstance(url, tuple) else (url, None, None))
+    assert len(s3.calls) == (2 if target == "unreachable message" else 1)
     assert capsys.readouterr().err.splitlines() == [
         "no usable cached message for 2025-04-24; downloading one to read the grid",
-        f"f00: TimeoutError: timed out for {F00}.idx, after 3 attempts",
+        f"f00: {error}",
         "2025-04-24 06z: could not read the grid; nothing stored",
     ]
+
+
+@pytest.mark.parametrize(
+    "target, name, kept_at_0700",
+    [
+        ("idx", "surface_pressure", []),
+        ("first message", "surface_pressure", []),
+        ("second message", "temperature_2m", ["surface_pressure"]),
+    ],
+)
+def test_an_outage_stops_the_run_keeps_what_it_has_and_a_rerun_resumes(s3, capsys, target, name, kept_at_0700):
+    s3.add_run()
+    write_points(5)
+    url = F01 + ".idx" if target == "idx" else message_range(s3, 1, name)
+    outage = source.Unreachable(f"HTTP 503 for {F01}, after 3 attempts")
+    s3.failures[url] = outage
+    assert ingest(*THREE) == 1
+    assert not any(call[0].startswith(F02) for call in s3.calls)
+    assert table() == [
+        r for r in sorted_expected([5]) if r[0] == RUN or r[4] in kept_at_0700
+    ]
+    assert f"f01 {name}: {outage}; stopping the run (a rerun resumes from here)" in capsys.readouterr().err.splitlines()
+    s3.failures.clear()
+    s3.calls.clear()
+    assert ingest(*THREE) == 0
+    assert not any(call[0].startswith(F00) for call in s3.calls)
+    assert table() == sorted_expected([5], hours=(0, 1, 2))
 
 
 def test_a_404_on_one_message_range_fails_only_that_block(s3, monkeypatch, capsys):
@@ -603,3 +637,18 @@ def test_a_database_or_os_error_mid_run_is_one_line_and_exit_1(s3, monkeypatch, 
     err = capsys.readouterr().err.splitlines()
     assert err[-1] == f"hrrr-ingest: {str(error).splitlines()[0]}"
     assert not any("Traceback" in line for line in err)
+
+
+@pytest.mark.parametrize(
+    "error, line", [(OSError(), "OSError"), (OSError("\n"), "OSError"), (duckdb.IOException(""), "IOException")]
+)
+def test_an_error_with_no_message_is_named_by_its_type(s3, monkeypatch, capsys, error, line):
+    s3.add_run()
+    write_points(5)
+
+    def failing_missing(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(store, "missing", failing_missing)
+    assert ingest(*ONE) == 1
+    assert capsys.readouterr().err.splitlines()[-1] == f"hrrr-ingest: {line}"

@@ -111,6 +111,7 @@ def test_transient_failures_are_retried_with_backoff_then_give_up(monkeypatch, f
     sleeps = []
     with pytest.raises(source.FetchError) as exc:
         source.fetch(URL, sleep=sleeps.append)
+    assert type(exc.value) is source.Unreachable
     assert str(exc.value) == f"{problem} for {URL}, after 3 attempts"
     assert len(requests) == 3
     assert sleeps == [5, 10]

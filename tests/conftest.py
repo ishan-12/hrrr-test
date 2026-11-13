@@ -78,7 +78,7 @@ class FakeS3:
         self.objects = {}  # https URL -> bytes
         self.calls = []  # (url, start, end)
         self.page_size = 1000
-        self.failures = {}  # url -> exception to raise for every request to it
+        self.failures = {}  # url, or (url, start, end) for one byte range -> exception to raise for it
 
     def add_hour(self, run_date: date, hour: int, messages: dict[str, bytes]) -> None:
         """One GRIB2 file: the given {idx label: message} plus a trailing unrelated message, and its .idx."""
@@ -107,8 +107,9 @@ class FakeS3:
 
     def __call__(self, url: str, start=None, end=None) -> bytes:
         self.calls.append((url, start, end))
-        if url in self.failures:
-            raise self.failures[url]
+        failure = self.failures.get(url) or self.failures.get((url, start, end))
+        if failure:
+            raise failure
         if "?" in url:
             return self._listing(url)
         if url not in self.objects:

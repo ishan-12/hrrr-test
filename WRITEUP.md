@@ -114,6 +114,57 @@ changed several times. The tool already reports unpublished hours and missing va
 1 without failing the rest. A backfill would record those gaps as expected, per period, instead of
 retrying them forever.
 
+## Failure modes and known limitations (drafted by Claude)
+
+A review in turn 6 went through each external dependency (network, disk, database). For each, it
+checked a sustained outage, a local resource error and one item failing mid-run. It also checked
+whether failures are remembered or retried, whether any error handler can itself raise, and what
+completed work a failure loses.
+
+What holds:
+- A failed variable loses only its own (hour, variable) block.
+- A missing or refused `.idx` loses only its hour, and is fetched once.
+- A bad cached copy is reported once and downloaded again.
+- Rows are committed one hour at a time, so a failure never loses a stored hour.
+- Every failure exits 1, and a re-run fetches only what is missing.
+
+Fixed in turn 6 (medium):
+- **The CLI's error handler could itself crash.** It printed the first line of the error message,
+  which raised `IndexError` when the message was empty (`OSError()`, for example). It now prints the
+  exception's type instead.
+- **A sustained outage dragged on hour by hour.** Each later hour spent a full retry cycle on its
+  `.idx`: 3 attempts and 15 s of backoff per hour. That is about 12 minutes for a 48-hour run when
+  connections fail fast, and up to about 2.6 hours when each attempt hits the 60 s timeout. A
+  request that fails all three attempts now stops the run. The rows the current hour had already
+  gathered are stored first.
+- **A failed insert did not stop the run.** After a full disk or an I/O error, every later hour
+  still downloaded its messages and then failed to insert. With the cache on the same full disk, a
+  default run would download about 0.8 GB and keep none of it. A failed insert now stops the run.
+
+Known limitations (low, not fixed):
+- **Cache write failures are not remembered.** With an unwritable cache, each block prints its own
+  "could not cache" line: up to 528 for a default run. Each failure costs only a local system call.
+- **A failed cache write can leave a `.part` file.** It is ignored, and overwritten by the next
+  write of that message, but never deleted.
+- **A server that ignores the `Range` header** and answers 200 makes the tool read the whole file
+  (about 150 MB) into memory before the 206 check rejects it. S3 honours `Range`; a proxy might not.
+- **The 60 s timeout applies to each socket read, not to the whole request.** A connection that
+  sends a byte every 59 s never times out.
+- **The default date can take about 2,000 requests to give up.** If listings succeed but come back
+  empty (for example, NOAA moves the data), default-date discovery lists every date back to
+  2020-12-03 before exiting 1.
+- **A listing that repeats its continuation token would be paged forever.** S3 does not do this.
+- **The summary line can be lost after a database failure.** If the database is unusable after a
+  failed insert, the final missing-key query fails too. The CLI then prints the one-line database
+  error instead of the summary line. Stored hours are kept.
+- **Ctrl-C prints a Python traceback.** Stored hours are kept. The current hour's rows are lost, but
+  its messages are already cached.
+- **A closed or broken stderr makes the tool crash.** Printing a warning raises, and the CLI's own
+  error line fails the same way, so the tool ends with a traceback.
+- **A corrupted cache file is not always caught.** GRIB2 has no checksum, so a cached file damaged
+  inside its data section but with intact framing, identity and grid hash would be decoded as-is.
+  This is the cache checksum manifest listed under Q3.
+
 ## How the rule engine shaped this build (drafted by Claude)
 
 The engine's latest report is committed as [docs/ruler-report.txt](docs/ruler-report.txt). It
@@ -128,7 +179,7 @@ shortcuts). It also refuses to let the turn end until a **postflight** cites mac
 evidence: a passing test run after the last edit, and a mutation run on every changed source file
 with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
 
-**Gated turns.** The session had five turns. Only those that changed something need a preflight
+**Gated turns.** The session had six turns. Only those that changed something need a preflight
 and a postflight.
 
 | Turn | What it did | Gate |
@@ -138,6 +189,7 @@ and a postflight.
 | 3 | The three reviewers re-read the last docs commits; two doc errors fixed | Preflight and postflight accepted first time |
 | 4 | `ruler doctor` (only the Go tools govulncheck and go-mutesting missing; this repo has no Go) | Read-only, no gate needed |
 | 5 | Fixes from an outside review (below) | Preflight accepted first time; postflight rejected once (the tests were already committed, so R9 needed a note naming which tests cover the changed files), then accepted; `ruler report` exit 0, PASS ([docs/ruler-report.txt](docs/ruler-report.txt)) |
+| 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | GATE-PENDING |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
@@ -160,8 +212,9 @@ Turn 5 fixed four issues, test-first:
 
 - **Dependency audit.** Editing `pyproject.toml` deferred the audit until a lockfile existed.
   `uv.lock` was then scanned with osv-scanner: 0 findings, and again after each later edit.
-- **Exit-masked tests.** Four test runs piped into `grep` or `tail` were flagged as not citable,
-  because the pipe hides pytest's exit code. Each was re-run on its own.
+- **Exit-masked tests.** Test runs piped into `grep` or `tail` (four in turn 1, two red runs in
+  turn 6) were flagged as not citable, because the pipe hides pytest's exit code. Each was re-run on
+  its own.
 - **Mutation testing**, required with zero survivors, drove most of the test design:
   - It exposed two bugs in the mutation tooling itself. mutmut 2 counts only exit code 1 as
     "killed", so mutants that crash at import (exit 4) were reported as survivors. Its timeout
