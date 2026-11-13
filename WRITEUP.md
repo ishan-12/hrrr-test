@@ -220,7 +220,7 @@ and a postflight.
 | 10 | The owner approved mutant 195. The docs now record it, and a comment explains the `break` | Preflight and postflight accepted first time, with 195 accepted as owner-approved. `ruler report` still exits 1, `VERDICT: FAIL`. That comes from turn 7's fail-open and turn 8's R9 risk, which stay on record |
 | 11 | A question: what does `VERDICT: FAIL` mean, and can it become PASS? | Read-only, no gate needed |
 | 12 | A question: have all the requested issues been fixed? | Read-only, no gate needed |
-| 13 | At the owner's request, the committed copy of the engine's report was removed from the repository and from its whole git history, and the file name was added to `.gitignore`. Without the engine's code, a reader cannot interpret it | GATE-PENDING |
+| 13 | At the owner's request, the committed copy of the engine's report was removed from the repository and from its whole git history, and the file name was added to `.gitignore`. Without the engine's code, a reader cannot interpret it | Preflight accepted first time. Blast radius (R10) was marked **risk**, because rewriting history cannot be undone in place; a full backup of the old history was taken first. The postflight was rejected once (notes not tied to a changed file, a missing perf entry), then accepted |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
