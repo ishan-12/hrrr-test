@@ -202,7 +202,7 @@ shortcuts). It also refuses to let the turn end until a **postflight** cites mac
 evidence: a passing test run after the last edit, and a mutation run on every changed source file
 with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
 
-**Gated turns.** The session had seven turns. Only those that changed something need a preflight
+**Gated turns.** The session had eight turns. Only those that changed something need a preflight
 and a postflight.
 
 | Turn | What it did | Gate |
@@ -213,6 +213,7 @@ and a postflight.
 | 4 | `ruler doctor` (only the Go tools govulncheck and go-mutesting missing; this repo has no Go) | Read-only, no gate needed |
 | 5 | Fixes from an outside review (below) | Preflight accepted first time; postflight rejected once (the tests were already committed, so R9 needed a note naming which tests cover the changed files), then accepted; `ruler report` exit 0, PASS ([docs/ruler-report.txt](docs/ruler-report.txt)) |
 | 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | Preflight accepted first time. The stop hook blocked once: Claude ended the turn while a mutation run was still going in the background. The postflight was rejected once, for two reasons. First, the engine records each mutation run as a code change, so the earlier test run counted as stale and was re-run. Second, the edits were made by scripts the engine cannot attribute to files, so R9 needed a waiver; it names the three mutation runs on the changed files. Those runs reported 0 survivors, but that count relied on mutmut's stale cache (see turn 7). The postflight was then accepted; `ruler report` exit 0, PASS |
+| 7 | Fixes from an outside pre-submission review; mutation re-run from scratch (1 survivor, shown to the owner) | **Failed open: unreviewed by the engine.** Preflight accepted first time. The postflight was rejected twice, both times for stale evidence. The first time, Claude edited the docs and committed after the mutation runs. The second time, a read-only shell loop printing the results ran after the final test run, and the engine counts any loop as a possible change. The owner's rule is to stop after the same gate blocks twice, so Claude stopped and asked. The stop hook then blocked three times and let the turn through. `ruler report` has shown `VERDICT: FAIL` (exit 1, "fail-open turns: 1") since then |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
