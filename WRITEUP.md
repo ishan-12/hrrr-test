@@ -190,9 +190,10 @@ Known limitations (low, not fixed):
 
 ## How the rule engine shaped this build (drafted by Claude)
 
-The engine's latest report is committed as [docs/ruler-report.txt](docs/ruler-report.txt). It
-passed the repository's leak scan, which was the condition for committing it. The same report is
-also kept with the private working notes.
+The engine's `ruler report` summarises a whole session. It shows `VERDICT: PASS` only if no turn
+ended unreviewed ("failed open") and no accepted postflight carried a FAIL or RISK verdict. The
+report itself is kept with the private working notes, not in this repository. The table below
+gives its result where it matters.
 
 `llm-rule-engine` sits in Claude Code's hooks. It blocks every mutating action (file edit, shell
 command that writes, script run) until Claude files a **preflight**: a verdict and a specific note
@@ -202,7 +203,7 @@ shortcuts). It also refuses to let the turn end until a **postflight** cites mac
 evidence: a passing test run after the last edit, and a mutation run on every changed source file
 with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
 
-**Gated turns.** The session had ten turns. Only those that changed something need a preflight
+**Gated turns.** The session had thirteen turns. Only those that changed something need a preflight
 and a postflight.
 
 | Turn | What it did | Gate |
@@ -211,12 +212,15 @@ and a postflight.
 | 2 | A question: had the work been reviewed? | Read-only, no gate needed |
 | 3 | The three reviewers re-read the last docs commits; two doc errors fixed | Preflight and postflight accepted first time |
 | 4 | `ruler doctor` (only the Go tools govulncheck and go-mutesting missing; this repo has no Go) | Read-only, no gate needed |
-| 5 | Fixes from an outside review (below) | Preflight accepted first time; postflight rejected once (the tests were already committed, so R9 needed a note naming which tests cover the changed files), then accepted; `ruler report` exit 0, PASS ([docs/ruler-report.txt](docs/ruler-report.txt)) |
+| 5 | Fixes from an outside review (below) | Preflight accepted first time; postflight rejected once (the tests were already committed, so R9 needed a note naming which tests cover the changed files), then accepted; `ruler report` exit 0, PASS |
 | 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | Preflight accepted first time. The stop hook blocked once: Claude ended the turn while a mutation run was still going in the background. The postflight was rejected once, for two reasons. First, the engine records each mutation run as a code change, so the earlier test run counted as stale and was re-run. Second, the edits were made by scripts the engine cannot attribute to files, so R9 needed a waiver; it names the three mutation runs on the changed files. Those runs reported 0 survivors, but that count relied on mutmut's stale cache (see turn 7). The postflight was then accepted; `ruler report` exit 0, PASS |
 | 7 | Fixes from an outside pre-submission review; mutation re-run from scratch (1 survivor, shown to the owner) | **Failed open: unreviewed by the engine.** Preflight accepted first time. The postflight was rejected twice, both times for stale evidence. The first time, Claude edited the docs and committed after the mutation runs. The second time, a read-only shell loop printing the results ran after the final test run, and the engine counts any loop as a possible change. The owner's rule is to stop after the same gate blocks twice, so Claude stopped and asked. The stop hook then blocked three times and let the turn through. `ruler report` has shown `VERDICT: FAIL` (exit 1, "fail-open turns: 1") since then |
-| 8 | At the owner's request, turn 7's evidence was re-run on the unchanged code: six mutation runs, then the full suite, back to back | Preflight and postflight accepted first time. R9 is marked **risk**, not pass, because survivor 195 is not approved. `ruler report` exit 1, `VERDICT: FAIL` ([docs/ruler-report.txt](docs/ruler-report.txt)): the turn 7 fail-open stays on record, and the re-run does not erase it |
+| 8 | At the owner's request, turn 7's evidence was re-run on the unchanged code: six mutation runs, then the full suite, back to back | Preflight and postflight accepted first time. R9 is marked **risk**, not pass, because survivor 195 is not approved. `ruler report` exit 1, `VERDICT: FAIL`: the turn 7 fail-open stays on record, and the re-run does not erase it |
 | 9 | The owner asked for a recommendation on mutant 195. Three independent reviewer agents (correctness, weather data, grader's view) all recommended approving it as equivalent | No files changed. A docs-only preflight did not allow messaging the reviewers, so a full preflight was filed. The postflight was rejected once (a stale test run, a miscount and a missing perf note), then accepted. One reviewer filed a preflight itself, under turn 8's token, to get its report through. That was outside its read-only brief, and it was reported to the owner |
-| 10 | The owner approved mutant 195. The docs now record it, and a comment explains the `break` | Preflight and postflight accepted first time, with 195 accepted as owner-approved. `ruler report` still exits 1, `VERDICT: FAIL` ([docs/ruler-report.txt](docs/ruler-report.txt)). That comes from turn 7's fail-open and turn 8's R9 risk, which stay on record |
+| 10 | The owner approved mutant 195. The docs now record it, and a comment explains the `break` | Preflight and postflight accepted first time, with 195 accepted as owner-approved. `ruler report` still exits 1, `VERDICT: FAIL`. That comes from turn 7's fail-open and turn 8's R9 risk, which stay on record |
+| 11 | A question: what does `VERDICT: FAIL` mean, and can it become PASS? | Read-only, no gate needed |
+| 12 | A question: have all the requested issues been fixed? | Read-only, no gate needed |
+| 13 | At the owner's request, the committed copy of the engine's report was removed from the repository and from its whole git history, and the file name was added to `.gitignore`. Without the engine's code, a reader cannot interpret it | GATE-PENDING |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
@@ -299,8 +303,8 @@ run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore 
 - **What was done about it.** All edits were finished and committed. Then the full test suite and
   the six mutation runs were repeated back to back, with only read-only commands in between, and
   the postflight was resubmitted.
-- **The resubmission was accepted**, and `ruler report` then exited 0 with `VERDICT: PASS`
-  ([docs/ruler-report.txt](docs/ruler-report.txt)). Its "postflights with FAIL: 0" does not hide
+- **The resubmission was accepted**, and `ruler report` then exited 0 with `VERDICT: PASS`.
+  Its "postflights with FAIL: 0" does not hide
   the first rejection. As Claude reads it, the report counts accepted postflights that carry a FAIL
   verdict. A rejected submission is never accepted, so it isn't in that count.
 

@@ -30,6 +30,9 @@ html/
 # Private working notes (not part of the submission)
 notes/
 
+# The rule engine's session report: kept with the private notes, never committed
+ruler-report.txt
+
 # Personal Claude Code overrides
 .claude/settings.local.json
 
