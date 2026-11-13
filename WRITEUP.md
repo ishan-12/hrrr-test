@@ -218,7 +218,7 @@ shortcuts). It also refuses to let the turn end until a **postflight** cites mac
 evidence: a passing test run after the last edit, and a mutation run on every changed source file
 with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
 
-**Gated turns.** The session had thirteen turns. Only those that changed something need a preflight
+**Gated turns.** The session had fourteen turns. Only those that changed something need a preflight
 and a postflight.
 
 | Turn | What it did | Gate |
@@ -236,6 +236,7 @@ and a postflight.
 | 11 | A question: what does `VERDICT: FAIL` mean, and can it become PASS? | Read-only, no gate needed |
 | 12 | A question: have all the requested issues been fixed? | Read-only, no gate needed |
 | 13 | At the owner's request, the committed copy of the engine's report was removed from the repository and from its whole git history, and the file name was added to `.gitignore`. Its format is specific to the engine, which is not part of this submission | Preflight accepted first time. Blast radius (R10) was marked **risk**, because rewriting history cannot be undone in place; a full backup of the old history was taken first. The postflight was rejected once (notes not tied to a changed file, a missing perf entry), then accepted |
+| 14 | Fixes from a confirmation review. A cached grid that ecCodes cannot read is now a one-line error, and the docs were tightened | Preflight accepted first time. The postflight was rejected once (two notes not tied to a changed file), then accepted |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
