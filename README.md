@@ -201,8 +201,9 @@ uv run mutmut run --CI --paths-to-mutate src/hrrr_ingest/<file>.py
 Result on 2026-11-12, all six modules from scratch: 484 mutants, 482 killed, 1 timed out and
 1 survived.
 - The timed-out mutant walks the default date forwards forever, and mutmut's timeout catches it.
-- The survivor is `break` → `continue` in the grid bootstrap. It is believed equivalent: either way
-  that hour's remaining variables fail at once, with no request. It awaits the owner's decision.
+- The survivor is `break` → `continue` in the grid bootstrap. It is equivalent: either way, that
+  hour's remaining variables fail at once, with no request and no output. Three independent
+  reviewers agreed, and the owner approved it.
 
 mutmut 2 never re-tests a mutant it has once marked killed, so delete `.mutmut-cache` before
 trusting a full result. The one exclusion is `source._http_get`, the raw `urllib` call, whose lines

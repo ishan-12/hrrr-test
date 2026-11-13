@@ -131,7 +131,7 @@ class Run:
                     return self.download(hour, variable)
                 except source.Unreachable:  # already reported; must stay above BLOCK_ERRORS, which includes it
                     return None
-                except HourUnavailable:  # already reported: try the next requested hour
+                except HourUnavailable:  # remembered, so the hour's other variables would only re-raise it: next hour
                     break
                 except BLOCK_ERRORS as e:
                     say(f"f{hour:02d} {variable.name}: {e}")

@@ -202,7 +202,7 @@ shortcuts). It also refuses to let the turn end until a **postflight** cites mac
 evidence: a passing test run after the last edit, and a mutation run on every changed source file
 with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
 
-**Gated turns.** The session had eight turns. Only those that changed something need a preflight
+**Gated turns.** The session had ten turns. Only those that changed something need a preflight
 and a postflight.
 
 | Turn | What it did | Gate |
@@ -215,6 +215,7 @@ and a postflight.
 | 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | Preflight accepted first time. The stop hook blocked once: Claude ended the turn while a mutation run was still going in the background. The postflight was rejected once, for two reasons. First, the engine records each mutation run as a code change, so the earlier test run counted as stale and was re-run. Second, the edits were made by scripts the engine cannot attribute to files, so R9 needed a waiver; it names the three mutation runs on the changed files. Those runs reported 0 survivors, but that count relied on mutmut's stale cache (see turn 7). The postflight was then accepted; `ruler report` exit 0, PASS |
 | 7 | Fixes from an outside pre-submission review; mutation re-run from scratch (1 survivor, shown to the owner) | **Failed open: unreviewed by the engine.** Preflight accepted first time. The postflight was rejected twice, both times for stale evidence. The first time, Claude edited the docs and committed after the mutation runs. The second time, a read-only shell loop printing the results ran after the final test run, and the engine counts any loop as a possible change. The owner's rule is to stop after the same gate blocks twice, so Claude stopped and asked. The stop hook then blocked three times and let the turn through. `ruler report` has shown `VERDICT: FAIL` (exit 1, "fail-open turns: 1") since then |
 | 8 | At the owner's request, turn 7's evidence was re-run on the unchanged code: six mutation runs, then the full suite, back to back | Preflight and postflight accepted first time. R9 is marked **risk**, not pass, because survivor 195 is not approved. `ruler report` exit 1, `VERDICT: FAIL` ([docs/ruler-report.txt](docs/ruler-report.txt)): the turn 7 fail-open stays on record, and the re-run does not erase it |
+| 9 | The owner asked for a recommendation on mutant 195. Three independent reviewer agents (correctness, weather data, grader's view) all recommended approving it as equivalent | No files changed. A docs-only preflight did not allow messaging the reviewers, so a full preflight was filed. The postflight was rejected once (a stale test run, a miscount and a missing perf note), then accepted. One reviewer filed a preflight itself, under turn 8's token, to get its report through. That was outside its read-only brief, and it was reported to the owner |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
@@ -271,15 +272,16 @@ Turn 5 fixed four issues, test-first:
   - The timed-out mutant walks the default date forwards, an infinite loop that mutmut's timeout
     catches.
   - The survivor is in `ingest.py`'s grid bootstrap: `break` → `continue` after a lost hour.
-    Claude believes it is equivalent. With `continue`, each remaining variable of that hour raises
-    the remembered failure again at once, with no request and no output. It has been shown to the
-    owner for a decision.
+    It is equivalent. With `continue`, each remaining variable of that hour raises the remembered
+    failure again at once, with no request and no output. Three independent reviewers
+    (correctness, weather data, grader's view) each traced this and agreed. None found a test or a
+    rewrite that would be better than keeping `break`.
 
   The raw HTTP call (`source._http_get`) is the only code excluded from mutation, marked
   `# pragma: no mutate`.
-- **Survivors approved by the owner:** none so far. The turn 7 survivor above awaits the owner's
-  decision. Before turn 7, every survivor was either killed by a better test or removed by
-  rewriting the line.
+- **Survivors approved by the owner:** one, mutant 195 above (`ingest.py:135`), in turn 10, after
+  the three reviewers' reports. Before turn 7, every survivor was either killed by a better test
+  or removed by rewriting the line.
 
 The engine also records each mutmut run as evidence when it starts. That includes one `source.py`
 run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore not cited.
