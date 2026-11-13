@@ -202,7 +202,7 @@ shortcuts). It also refuses to let the turn end until a **postflight** cites mac
 evidence: a passing test run after the last edit, and a mutation run on every changed source file
 with zero surviving mutants. A surviving mutant can only be waived by the owner, case by case.
 
-**Gated turns.** The session had six turns. Only those that changed something need a preflight
+**Gated turns.** The session had seven turns. Only those that changed something need a preflight
 and a postflight.
 
 | Turn | What it did | Gate |
@@ -212,7 +212,7 @@ and a postflight.
 | 3 | The three reviewers re-read the last docs commits; two doc errors fixed | Preflight and postflight accepted first time |
 | 4 | `ruler doctor` (only the Go tools govulncheck and go-mutesting missing; this repo has no Go) | Read-only, no gate needed |
 | 5 | Fixes from an outside review (below) | Preflight accepted first time; postflight rejected once (the tests were already committed, so R9 needed a note naming which tests cover the changed files), then accepted; `ruler report` exit 0, PASS ([docs/ruler-report.txt](docs/ruler-report.txt)) |
-| 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | Preflight accepted first time. The stop hook blocked once: Claude ended the turn while a mutation run was still going in the background. The postflight was rejected once, for two reasons. First, the engine records each mutation run as a code change, so the earlier test run counted as stale and was re-run. Second, the edits were made by scripts the engine cannot attribute to files, so R9 needed a waiver; it names the three mutation runs on the changed files (0 survivors). The postflight was then accepted; `ruler report` exit 0, PASS |
+| 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | Preflight accepted first time. The stop hook blocked once: Claude ended the turn while a mutation run was still going in the background. The postflight was rejected once, for two reasons. First, the engine records each mutation run as a code change, so the earlier test run counted as stale and was re-run. Second, the edits were made by scripts the engine cannot attribute to files, so R9 needed a waiver; it names the three mutation runs on the changed files. Those runs reported 0 survivors, but that count relied on mutmut's stale cache (see turn 7). The postflight was then accepted; `ruler report` exit 0, PASS |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
@@ -257,13 +257,27 @@ Turn 5 fixed four issues, test-first:
     - `values[mask] = np.nan`, where `None` also writes NaN;
     - an `axis=-1` literal;
     - a modulo-based longitude conversion;
-    - a `found = None` placeholder.
+    - a `found = None` placeholder;
+    - (turn 7) `self.down = None`, where `""` is falsy too, now checked with `is not None`.
+  - **A false "0 survivors".** mutmut 2 never re-tests a mutant it has once recorded as killed, even
+    after the tests change. So the turn 1-6 results came partly from stale cache entries. An outside
+    review found one such mutant: the grid bootstrap's own report line in `ingest.py`, which no
+    test checked. A stderr assertion now kills it.
 
-  Final result: 0 surviving mutants in all six modules. The raw HTTP call (`source._http_get`) is
-  the only code excluded from mutation, marked `# pragma: no mutate`. One infinite-loop mutant
-  (walking the default date forwards) is caught by mutmut's timeout.
-- **Survivors approved by the owner:** none. None had to be brought to the owner, because every
-  survivor was either killed by a better test or removed by rewriting the line.
+  Result in turn 7, with `.mutmut-cache` deleted and all six modules re-run from scratch:
+  484 mutants, 482 killed, 1 timed out and 1 survived.
+  - The timed-out mutant walks the default date forwards, an infinite loop that mutmut's timeout
+    catches.
+  - The survivor is in `ingest.py`'s grid bootstrap: `break` → `continue` after a lost hour.
+    Claude believes it is equivalent. With `continue`, each remaining variable of that hour raises
+    the remembered failure again at once, with no request and no output. It has been shown to the
+    owner for a decision.
+
+  The raw HTTP call (`source._http_get`) is the only code excluded from mutation, marked
+  `# pragma: no mutate`.
+- **Survivors approved by the owner:** none so far. The turn 7 survivor above awaits the owner's
+  decision. Before turn 7, every survivor was either killed by a better test or removed by
+  rewriting the line.
 
 The engine also records each mutmut run as evidence when it starts. That includes one `source.py`
 run that Claude stopped once it hung (evidence `ev-a78724`), which is therefore not cited.
