@@ -189,7 +189,7 @@ and a postflight.
 | 3 | The three reviewers re-read the last docs commits; two doc errors fixed | Preflight and postflight accepted first time |
 | 4 | `ruler doctor` (only the Go tools govulncheck and go-mutesting missing; this repo has no Go) | Read-only, no gate needed |
 | 5 | Fixes from an outside review (below) | Preflight accepted first time; postflight rejected once (the tests were already committed, so R9 needed a note naming which tests cover the changed files), then accepted; `ruler report` exit 0, PASS ([docs/ruler-report.txt](docs/ruler-report.txt)) |
-| 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | GATE-PENDING |
+| 6 | An empty-message crash in the CLI's error handler, then the failure-mode review above (three medium findings fixed) | Preflight accepted first time. The stop hook blocked once: Claude ended the turn while a mutation run was still going in the background. The postflight was rejected once, for two reasons. First, the engine records each mutation run as a code change, so the earlier test run counted as stale and was re-run. Second, the edits were made by scripts the engine cannot attribute to files, so R9 needed a waiver; it names the three mutation runs on the changed files (0 survivors). The postflight was then accepted; `ruler report` exit 0, PASS |
 
 Turn 5 fixed four issues, test-first:
 - A failed `.idx` fetch now ends its hour once, instead of being retried for every variable (three
